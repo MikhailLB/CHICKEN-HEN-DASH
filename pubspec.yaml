@@ -1,0 +1,53 @@
+name: hendash
+description: "Chicken Hen Dash — endless road crossing game."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.12.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  webview_flutter: ^4.10.0
+  flutter_launcher_icons: ^0.14.4
+  shared_preferences: ^2.5.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter_launcher_icons:
+  android: true
+  ios: false
+  image_path: "assets/icon.jpg"
+  adaptive_icon_background: "#FFCC33"
+  adaptive_icon_foreground: "assets/icon.jpg"
+  adaptive_icon_foreground_inset: 0
+  min_sdk_android: 21
+  remove_alpha_ios: true
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/bggame.webp
+    - assets/bgmenu.webp
+    - assets/bluecar.webp
+    - assets/carred.webp
+    - assets/chikens.webp
+    - assets/fence.webp
+    - assets/grass.webp
+    - assets/hay.webp
+    - assets/icon.jpg
+    - assets/loading_hor.png
+    - assets/loading_vert.png
+    - assets/log .webp
+    - assets/pavet.webp
+    - assets/road.webp
+    - assets/rock.webp
+    - assets/tractor.webp
+    - assets/water.webp
+    - assets/waterlily.webp
+    - assets/yellowcar.webp
