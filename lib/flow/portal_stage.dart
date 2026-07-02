@@ -409,12 +409,6 @@ class _PortalStageState extends State<PortalStage>
 
   @override
   Widget build(BuildContext context) {
-    // Padding respects notches, curved corners and gesture bars on every
-    // side.  In immersive-sticky mode Android reports viewPadding as the
-    // system-reserved area even when the bars are hidden, so this keeps
-    // the WebView content inside the visually safe rectangle.
-    final viewPadding = MediaQuery.of(context).viewPadding;
-
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) async {
@@ -422,35 +416,41 @@ class _PortalStageState extends State<PortalStage>
       },
       child: Scaffold(
         backgroundColor: Colors.black,
+        // Keep the keyboard from resizing the WebView — the injected
+        // scroll shifter puts focused inputs above the keyboard instead.
         resizeToAvoidBottomInset: false,
-        body: Stack(
-          fit: StackFit.expand,
-          children: [
-            Padding(
-              padding: EdgeInsets.only(
-                top: viewPadding.top,
-                bottom: viewPadding.bottom,
-                left: viewPadding.left,
-                right: viewPadding.right,
-              ),
-              child: WebViewWidget(controller: _view),
-            ),
-            if (_spinning)
-              const ColoredBox(
-                color: Color(0xA0000000),
-                child: Center(
-                  child: SizedBox(
-                    width: 44,
-                    height: 44,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 3,
-                      valueColor:
-                          AlwaysStoppedAnimation<Color>(Color(0xFFFFCC33)),
+        body: SafeArea(
+          // Every side matters: status bar cutout at the top, gesture
+          // pill / nav bar at the bottom, curved-screen bezels on the
+          // left / right (Galaxy S-series edge screens).  In edge-to-
+          // edge mode SafeArea reads the current padding from
+          // MediaQuery, which Android keeps in sync with system bars.
+          top: true,
+          bottom: true,
+          left: true,
+          right: true,
+          minimum: EdgeInsets.zero,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              WebViewWidget(controller: _view),
+              if (_spinning)
+                const ColoredBox(
+                  color: Color(0xA0000000),
+                  child: Center(
+                    child: SizedBox(
+                      width: 44,
+                      height: 44,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 3,
+                        valueColor:
+                            AlwaysStoppedAnimation<Color>(Color(0xFFFFCC33)),
+                      ),
                     ),
                   ),
                 ),
-              ),
-          ],
+            ],
+          ),
         ),
       ),
     );

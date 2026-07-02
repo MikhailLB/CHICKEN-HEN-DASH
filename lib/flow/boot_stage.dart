@@ -64,11 +64,9 @@ class BootStage extends StatefulWidget {
 class _BootStageState extends State<BootStage> with TickerProviderStateMixin {
   late final AnimationController _dotsCtrl;
   late final AnimationController _pulseCtrl;
-
-  double _progress = 0.0;
-  double _stageTarget = 0.0;
-  bool _handedOff = false;
+  late final AnimationController _progressCtrl;
   Timer? _creepTimer;
+  bool _handedOff = false;
 
   @override
   void initState() {
@@ -90,55 +88,67 @@ class _BootStageState extends State<BootStage> with TickerProviderStateMixin {
       vsync: this,
       duration: const Duration(milliseconds: 1400),
     )..repeat(reverse: true);
+    _progressCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 700),
+      value: 0.0,
+    );
 
     _routeAfterBoot();
   }
 
   // -------- Progress bar helpers ---------------------------------------
   //
-  // The bar advances through a series of stage targets that mirror the
-  // actual gray-flow work (network probe → attribution → gate → …).
-  // Between stages a low-frequency "creep" timer nudges the fill toward
-  // the current target so the bar never freezes on a single value.  A
-  // final [_finishProgress] sweeps the remainder to 100% just before we
-  // hand off to another screen.
+  // The ribbon fills left → right through discrete stage targets that
+  // mirror the actual gray-flow work (network probe → attribution →
+  // gate → …).  Each transition rides on an AnimationController.animateTo
+  // so the sweep is smooth and always visible — no more sitting at 0.
+  //
+  // Between stages a very slow "creep" timer nudges the fill by ~0.4%
+  // per second toward the next target.  On a slow backend call this
+  // makes the bar tick forward gently instead of freezing.  The final
+  // [_finishProgress] sweeps whatever remains to 100% just before we
+  // hand off to another screen — matching the "fills completely ONLY
+  // at the moment of launch" requirement.
+
+  double _pendingCeiling = 0.0;
 
   void _startCreep() {
     _creepTimer?.cancel();
     _creepTimer =
-        Timer.periodic(const Duration(milliseconds: 180), (_) {
+        Timer.periodic(const Duration(milliseconds: 250), (_) {
       if (!mounted) return;
-      if (_progress >= _stageTarget) return;
-      // Close ~15% of the remaining gap per tick — feels alive but
-      // still leaves room for the next stage jump.
-      final next = _progress + (_stageTarget - _progress) * 0.15;
-      setState(() => _progress = next.clamp(0.0, _stageTarget));
+      if (_progressCtrl.isAnimating) return;
+      // Stop creeping ~2% below the current stage target so the next
+      // _stageTo call still has visible room to animate.
+      final ceiling = (_pendingCeiling - 0.02).clamp(0.0, 1.0);
+      if (_progressCtrl.value >= ceiling) return;
+      final next = (_progressCtrl.value + 0.006).clamp(0.0, ceiling);
+      _progressCtrl.value = next;
     });
   }
 
   Future<void> _stageTo(double target) async {
-    _stageTarget = target.clamp(0.0, 1.0);
-    // Give the creep timer a couple of ticks to advance the fill so a
-    // fast boot still visibly walks the ribbon forward.
-    await Future<void>.delayed(const Duration(milliseconds: 220));
+    final clamped = target.clamp(0.0, 1.0);
+    _pendingCeiling = clamped;
+    if (_progressCtrl.value >= clamped) return;
+    await _progressCtrl.animateTo(
+      clamped,
+      duration: const Duration(milliseconds: 550),
+      curve: Curves.easeOutCubic,
+    );
   }
 
   Future<void> _finishProgress() async {
     _creepTimer?.cancel();
-    _stageTarget = 1.0;
-    const total = Duration(milliseconds: 900);
-    const steps = 40;
-    final start = _progress;
-    final delta = 1.0 - start;
-    if (delta <= 0.001) return;
-    for (var i = 1; i <= steps; i++) {
-      await Future<void>.delayed(total ~/ steps);
-      if (!mounted) return;
-      final t = i / steps;
-      final eased = 1.0 - (1.0 - t) * (1.0 - t);
-      setState(() => _progress = (start + delta * eased).clamp(0.0, 1.0));
-    }
-    await Future<void>.delayed(const Duration(milliseconds: 200));
+    _pendingCeiling = 1.0;
+    if (_progressCtrl.value >= 0.999) return;
+    await _progressCtrl.animateTo(
+      1.0,
+      duration: const Duration(milliseconds: 900),
+      curve: Curves.easeOutCubic,
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 220));
   }
 
   // -------- Routing -----------------------------------------------------
@@ -359,6 +369,7 @@ class _BootStageState extends State<BootStage> with TickerProviderStateMixin {
   @override
   void dispose() {
     _creepTimer?.cancel();
+    _progressCtrl.dispose();
     _dotsCtrl.dispose();
     _pulseCtrl.dispose();
     widget.pushCourier.onTokenRotated = null;
@@ -390,24 +401,30 @@ class _BootStageState extends State<BootStage> with TickerProviderStateMixin {
                 left: 0,
                 right: 0,
                 bottom: constraints.maxHeight * 0.08,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    _AnimatedDots(
-                      controller: _dotsCtrl,
-                      percent: (_progress * 100).round(),
-                    ),
-                    const SizedBox(height: 16),
-                    Padding(
-                      padding: EdgeInsets.symmetric(
-                        horizontal: constraints.maxWidth * 0.12,
-                      ),
-                      child: _RibbonProgress(
-                        progress: _progress,
-                        pulse: _pulseCtrl,
-                      ),
-                    ),
-                  ],
+                child: AnimatedBuilder(
+                  animation: _progressCtrl,
+                  builder: (_, _) {
+                    final progress = _progressCtrl.value;
+                    return Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _AnimatedDots(
+                          controller: _dotsCtrl,
+                          percent: (progress * 100).round(),
+                        ),
+                        const SizedBox(height: 16),
+                        Padding(
+                          padding: EdgeInsets.symmetric(
+                            horizontal: constraints.maxWidth * 0.12,
+                          ),
+                          child: _RibbonProgress(
+                            progress: progress,
+                            pulse: _pulseCtrl,
+                          ),
+                        ),
+                      ],
+                    );
+                  },
                 ),
               ),
             ],
