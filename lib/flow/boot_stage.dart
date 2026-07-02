@@ -373,7 +373,10 @@ class _BootStageState extends State<BootStage> with TickerProviderStateMixin {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFFFCC33),
+      // Matches the top-of-sky pixel of the loading art so there is no
+      // colour flash between the native launch backdrop and the moment
+      // Flutter finishes decoding loading_vert.png / loading_hor.png.
+      backgroundColor: const Color(0xFF0180E9),
       body: LayoutBuilder(
         builder: (context, constraints) {
           final isPortrait = constraints.maxHeight >= constraints.maxWidth;
