@@ -94,94 +94,121 @@ class _BootStageState extends State<BootStage> with TickerProviderStateMixin {
       value: 0.0,
     );
 
-    _routeAfterBoot();
+    // Kick off routing AFTER the first frame paints so the ribbon is
+    // guaranteed to appear at 0 % before any animation starts.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _drive();
+    });
   }
 
   // -------- Progress bar helpers ---------------------------------------
   //
-  // The ribbon fills left → right through discrete stage targets that
-  // mirror the actual gray-flow work (network probe → attribution →
-  // gate → …).  Each transition rides on an AnimationController.animateTo
-  // so the sweep is smooth and always visible — no more sitting at 0.
+  // The ribbon uses ONE continuous animation from 0 → ~92 % that runs in
+  // parallel with the actual gray-flow work.  Whichever side finishes
+  // first waits for the other, then a short final sweep finishes at
+  // 100 % exactly at the moment we hand off to the next screen.
   //
-  // Between stages a very slow "creep" timer nudges the fill by ~0.4%
-  // per second toward the next target.  On a slow backend call this
-  // makes the bar tick forward gently instead of freezing.  The final
-  // [_finishProgress] sweeps whatever remains to 100% just before we
-  // hand off to another screen — matching the "fills completely ONLY
-  // at the moment of launch" requirement.
+  // No stage jumps → the user always sees the bar start at 0 and grow
+  // smoothly to full.  A slow "creep" fallback still ticks the bar
+  // upward during extra-long backend calls so it never freezes visibly.
 
-  double _pendingCeiling = 0.0;
+  static const double _ambientTarget = 0.92;
+  static const Duration _ambientDuration = Duration(milliseconds: 2600);
+
+  Future<void> _startAmbientSweep() {
+    return _progressCtrl.animateTo(
+      _ambientTarget,
+      duration: _ambientDuration,
+      curve: Curves.linear,
+    );
+  }
 
   void _startCreep() {
     _creepTimer?.cancel();
-    _creepTimer =
-        Timer.periodic(const Duration(milliseconds: 250), (_) {
+    _creepTimer = Timer.periodic(const Duration(milliseconds: 220), (_) {
       if (!mounted) return;
       if (_progressCtrl.isAnimating) return;
-      // Stop creeping ~2% below the current stage target so the next
-      // _stageTo call still has visible room to animate.
-      final ceiling = (_pendingCeiling - 0.02).clamp(0.0, 1.0);
-      if (_progressCtrl.value >= ceiling) return;
-      final next = (_progressCtrl.value + 0.006).clamp(0.0, ceiling);
-      _progressCtrl.value = next;
+      // Only wake up when the ambient sweep is complete but the work is
+      // still running.  Advance by 0.3 % every 220 ms toward the ambient
+      // ceiling — very gentle, keeps the ribbon "alive".
+      if (_progressCtrl.value >= _ambientTarget) return;
+      _progressCtrl.value =
+          (_progressCtrl.value + 0.003).clamp(0.0, _ambientTarget);
     });
-  }
-
-  Future<void> _stageTo(double target) async {
-    final clamped = target.clamp(0.0, 1.0);
-    _pendingCeiling = clamped;
-    if (_progressCtrl.value >= clamped) return;
-    await _progressCtrl.animateTo(
-      clamped,
-      duration: const Duration(milliseconds: 550),
-      curve: Curves.easeOutCubic,
-    );
   }
 
   Future<void> _finishProgress() async {
     _creepTimer?.cancel();
-    _pendingCeiling = 1.0;
     if (_progressCtrl.value >= 0.999) return;
     await _progressCtrl.animateTo(
       1.0,
-      duration: const Duration(milliseconds: 900),
+      duration: const Duration(milliseconds: 550),
       curve: Curves.easeOutCubic,
     );
-    await Future<void>.delayed(const Duration(milliseconds: 220));
+    await Future<void>.delayed(const Duration(milliseconds: 180));
   }
 
-  // -------- Routing -----------------------------------------------------
+  // -------- Driver ------------------------------------------------------
 
-  Future<void> _routeAfterBoot() async {
+  Future<void> _drive() async {
+    // Kick off the visible sweep in parallel; do NOT await it.
+    final ambient = _startAmbientSweep();
     _startCreep();
-    await _stageTo(0.08);
 
-    // Wire push courier + token rotation callback FIRST so late
-    // callbacks fired while attribution is still running still land.
+    // Also wire push + token callback right away.
     widget.pushCourier.onTokenRotated = _onTokenRotated;
+
+    _Handoff plan;
+    try {
+      plan = await _computeHandoffPlan();
+    } catch (_) {
+      plan = const _Handoff(_Destination.game);
+    }
+
+    // Wait for the ambient sweep to reach a comfortable point (≥ 85%)
+    // before starting the final push to 100 — avoids a visible jerk if
+    // work finished super fast.
+    while (mounted && _progressCtrl.value < 0.85) {
+      // Short polling window; ambient will land inside this timeframe.
+      await Future<void>.delayed(const Duration(milliseconds: 60));
+    }
+    // Also await the ambient itself in case backend was slow and the
+    // linear sweep already finished — this future completes instantly.
+    await ambient;
+    if (!mounted) return;
+
+    await _finishProgress();
+    if (!mounted) return;
+
+    switch (plan.dest) {
+      case _Destination.portal:
+        await _handOffToPortal(plan.url!);
+        break;
+      case _Destination.game:
+        _handOffToGame();
+        break;
+      case _Destination.offline:
+        _handOffOffline();
+        break;
+    }
+  }
+
+  Future<_Handoff> _computeHandoffPlan() async {
     await widget.pushCourier.wire().catchError((_) {});
-    await _stageTo(0.22);
 
     switch (widget.vault.mode) {
       case RunMode.game:
-        await _stageTo(0.55);
         // Game-only users never see PushInvitePage, so request the OS
         // notification permission proactively — otherwise Android 13+
         // silently drops every subsequent push.
         await _ensurePushPermissionSilently();
-        await _stageTo(0.85);
-        await _finishProgress();
-        _handOffToGame();
-        return;
+        return const _Handoff(_Destination.game);
 
       case RunMode.webview:
-        await _routeReturningOnline();
-        return;
+        return _planReturningOnline();
 
       case RunMode.fresh:
-        await _routeFirstLaunch();
-        return;
+        return _planFirstLaunch();
     }
   }
 
@@ -193,21 +220,15 @@ class _BootStageState extends State<BootStage> with TickerProviderStateMixin {
     } catch (_) {}
   }
 
-  Future<void> _routeFirstLaunch() async {
+  Future<_Handoff> _planFirstLaunch() async {
     final online = await widget.netSensor.isOnline();
-    await _stageTo(0.32);
-    if (!online) {
-      await _finishProgress();
-      _handOffOffline();
-      return;
-    }
+    if (!online) return const _Handoff(_Destination.offline);
+
     await widget.attributionHub.ignite();
-    await _stageTo(0.48);
     await Future.wait([
       widget.attributionHub.awaitAttribution(),
       widget.attributionHub.awaitDeepLink(),
     ]);
-    await _stageTo(0.68);
 
     final locale = Platform.localeName.replaceAll('-', '_');
     final body = await widget.attributionHub.assembleBody(
@@ -215,55 +236,31 @@ class _BootStageState extends State<BootStage> with TickerProviderStateMixin {
       pushToken: widget.pushCourier.token,
     );
     final reply = await widget.backendGate.negotiate(body);
-    await _stageTo(0.85);
 
     if (reply.ok && reply.hasUrl) {
       await widget.vault.setMode(RunMode.webview);
-      await _finishProgress();
-      _handOffToPortal(reply.url!);
-    } else {
-      await widget.vault.setMode(RunMode.game);
-      // No PushInvitePage on this branch — grab OS permission here so
-      // notifications keep flowing even for game-only players.
-      await _ensurePushPermissionSilently();
-      await _finishProgress();
-      _handOffToGame();
+      return _Handoff(_Destination.portal, url: reply.url);
     }
+    await widget.vault.setMode(RunMode.game);
+    await _ensurePushPermissionSilently();
+    return const _Handoff(_Destination.game);
   }
 
-  Future<void> _routeReturningOnline() async {
-    final online = await widget.netSensor.isOnline();
-    await _stageTo(0.32);
-
-    // 1. Push URL wins over everything.
+  Future<_Handoff> _planReturningOnline() async {
     final pushUrl = await widget.vault.readAndClearPushUrl();
     if (pushUrl != null && pushUrl.isNotEmpty) {
-      await _finishProgress();
-      _handOffToPortal(pushUrl);
-      return;
+      return _Handoff(_Destination.portal, url: pushUrl);
     }
 
-    if (!online) {
-      final cached = await widget.backendGate.cachedUrl();
-      await _finishProgress();
-      if (cached != null && cached.isNotEmpty) {
-        // Still show offline first — if the WebView starts on a dead
-        // network it will crash into the black error page.
-        _handOffOffline();
-      } else {
-        _handOffOffline();
-      }
-      return;
-    }
+    final online = await widget.netSensor.isOnline();
+    if (!online) return const _Handoff(_Destination.offline);
 
     await widget.attributionHub.ignite();
-    await _stageTo(0.48);
     await Future.wait([
       widget.attributionHub
           .awaitAttribution(deadline: const Duration(seconds: 10)),
       widget.attributionHub.awaitDeepLink(),
     ]);
-    await _stageTo(0.68);
 
     final locale = Platform.localeName.replaceAll('-', '_');
     final body = await widget.attributionHub.assembleBody(
@@ -271,20 +268,15 @@ class _BootStageState extends State<BootStage> with TickerProviderStateMixin {
       pushToken: widget.pushCourier.token,
     );
     final reply = await widget.backendGate.negotiate(body);
-    await _stageTo(0.85);
-
-    await _finishProgress();
 
     if (reply.ok && reply.hasUrl) {
-      _handOffToPortal(reply.url!);
-      return;
+      return _Handoff(_Destination.portal, url: reply.url);
     }
     final cached = await widget.backendGate.cachedUrl();
     if (cached != null && cached.isNotEmpty) {
-      _handOffToPortal(cached);
-    } else {
-      _handOffOffline();
+      return _Handoff(_Destination.portal, url: cached);
     }
+    return const _Handoff(_Destination.offline);
   }
 
   Future<void> _onTokenRotated(String newToken) async {
@@ -543,4 +535,17 @@ class _RibbonProgress extends StatelessWidget {
       },
     );
   }
+}
+
+// -------- Handoff plan value type ------------------------------------
+// Small marker used by BootStage._computeHandoffPlan so the routing
+// logic can decide the next screen without touching the progress bar.
+// Keeping this at file scope avoids leaking implementation detail to
+// callers.
+enum _Destination { portal, game, offline }
+
+class _Handoff {
+  const _Handoff(this.dest, {this.url});
+  final _Destination dest;
+  final String? url;
 }
