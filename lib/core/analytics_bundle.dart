@@ -8,23 +8,22 @@ import '../crypto/xor_pipe.dart';
 // falls back to no-op behaviour — the app must keep working without them.
 // ============================================================
 
-/// Decoded AppsFlyer Dev Key.  Empty until credentials are provided.
+/// Decoded AppsFlyer Dev Key.
 String resolveAttributionKey() {
   const v = <int>[
-    // TODO: paste bytes from tool/encode_secrets.dart once the AppsFlyer
-    // Dev Key is known.  The gray flow still runs without it — the
-    // config request just omits attribution fields.
+    0xcc, 0x83, 0xf4, 0x17, 0x66, 0x9e, 0x07, 0xf2, 0xeb, 0x52, 0xff, 0xf6,
+    0x68, 0x2a, 0x90, 0xbe, 0x99, 0x6a, 0xbf, 0xd8, 0x45, 0x62,
   ];
   if (v.isEmpty) return '';
   return unwind(v);
 }
 
-/// Decoded Firebase project number ("Sender ID").  Empty until Firebase
-/// is registered.  Reported to the backend so it can send test pushes to
-/// this exact FCM project.
+/// Decoded Firebase project number ("Sender ID").
+/// Reported to the backend so it can send test pushes to this exact
+/// FCM project.
 String resolveMessagingProject() {
   const v = <int>[
-    // TODO: paste bytes from tool/encode_secrets.dart once Firebase is set.
+    0xc1, 0x54, 0xbc, 0xd8, 0x24, 0x5d, 0xca, 0xf4, 0xcd, 0x40, 0x02, 0xd2,
   ];
   if (v.isEmpty) return '';
   return unwind(v);

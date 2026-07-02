@@ -5,10 +5,7 @@ plugins {
     id("com.android.application")
     id("kotlin-android")
     id("dev.flutter.flutter-gradle-plugin")
-    // Enable google-services once android/app/google-services.json is added
-    // (Firebase project registration). Left commented so the build succeeds
-    // in a fresh clone before Firebase credentials are wired.
-    // id("com.google.gms.google-services")
+    id("com.google.gms.google-services")
 }
 
 val keystoreProperties = Properties()

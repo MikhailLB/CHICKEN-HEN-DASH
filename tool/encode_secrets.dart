@@ -85,8 +85,10 @@ void main(List<String> args) {
   const endpointHost = 'https://hendash.com';
   const endpointPath = '/config.php';
 
-  const appsFlyerKey        = '';           // Fill once AppsFlyer key arrives.
-  const firebaseProjectId   = '';           // Firebase project number (sender ID).
+  // Fill in locally before running.  Never commit the plaintext value —
+  // encoded byte arrays live in lib/core/analytics_bundle.dart.
+  const appsFlyerKey        = '';
+  const firebaseProjectId   = '';
 
   const gcdHost = 'https://gcdsdk.appsflyer.com';
   const gcdPath = '/install_data/v4.0/';
