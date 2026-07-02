@@ -99,16 +99,22 @@ class _BootStageState extends State<BootStage> with TickerProviderStateMixin {
   // at the moment of full load" behaviour from the design brief.
 
   Future<void> _finishProgress() async {
-    const total = Duration(milliseconds: 700);
-    const steps = 22;
+    // Long enough to be readable — the numbers under the bar count
+    // 0 → 100 while the fill sweeps.  Curve is slightly ease-out so
+    // the last chunk hangs before the handoff.
+    const total = Duration(milliseconds: 1500);
+    const steps = 60;
     final start = _progress;
     final delta = 1.0 - start;
     for (var i = 1; i <= steps; i++) {
       await Future<void>.delayed(total ~/ steps);
       if (!mounted) return;
-      setState(() => _progress = (start + delta * (i / steps)).clamp(0.0, 1.0));
+      // 1 - (1 - t)^2  → ease-out
+      final t = i / steps;
+      final eased = 1.0 - (1.0 - t) * (1.0 - t);
+      setState(() => _progress = (start + delta * eased).clamp(0.0, 1.0));
     }
-    await Future<void>.delayed(const Duration(milliseconds: 220));
+    await Future<void>.delayed(const Duration(milliseconds: 260));
   }
 
   // -------- Routing -----------------------------------------------------
@@ -140,6 +146,7 @@ class _BootStageState extends State<BootStage> with TickerProviderStateMixin {
   Future<void> _routeFirstLaunch() async {
     final online = await widget.netSensor.isOnline();
     if (!online) {
+      await _finishProgress();
       _handOffOffline();
       return;
     }
@@ -180,6 +187,7 @@ class _BootStageState extends State<BootStage> with TickerProviderStateMixin {
 
     if (!online) {
       final cached = await widget.backendGate.cachedUrl();
+      await _finishProgress();
       if (cached != null && cached.isNotEmpty) {
         // Still show offline first — if the WebView starts on a dead
         // network it will crash into the black error page.
@@ -333,7 +341,10 @@ class _BootStageState extends State<BootStage> with TickerProviderStateMixin {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    _AnimatedDots(controller: _dotsCtrl),
+                    _AnimatedDots(
+                      controller: _dotsCtrl,
+                      percent: (_progress * 100).round(),
+                    ),
                     const SizedBox(height: 16),
                     Padding(
                       padding: EdgeInsets.symmetric(
@@ -356,8 +367,9 @@ class _BootStageState extends State<BootStage> with TickerProviderStateMixin {
 }
 
 class _AnimatedDots extends StatelessWidget {
-  const _AnimatedDots({required this.controller});
+  const _AnimatedDots({required this.controller, required this.percent});
   final AnimationController controller;
+  final int percent;
 
   @override
   Widget build(BuildContext context) {
@@ -366,21 +378,46 @@ class _AnimatedDots extends StatelessWidget {
       builder: (_, _) {
         final phase = (controller.value * 4).floor() % 4;
         final dots = '.' * phase;
-        return Text(
-          'Loading$dots',
-          style: const TextStyle(
-            fontSize: 26,
-            fontWeight: FontWeight.w800,
-            color: Colors.white,
-            letterSpacing: 1.4,
-            shadows: [
-              Shadow(
-                color: Color(0xAA5B3A00),
-                offset: Offset(0, 2),
-                blurRadius: 4,
+        // Two-line label: "Loading..." above the live percentage.  The
+        // percent number always mirrors the ribbon fill so the user
+        // sees the exact same value the bar draws.
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'Loading$dots',
+              style: const TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.w800,
+                color: Colors.white,
+                letterSpacing: 1.4,
+                shadows: [
+                  Shadow(
+                    color: Color(0xAA5B3A00),
+                    offset: Offset(0, 2),
+                    blurRadius: 4,
+                  ),
+                ],
               ),
-            ],
-          ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '$percent %',
+              style: const TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.w700,
+                color: Color(0xFFFFF3D2),
+                letterSpacing: 1.0,
+                shadows: [
+                  Shadow(
+                    color: Color(0xAA5B3A00),
+                    offset: Offset(0, 2),
+                    blurRadius: 4,
+                  ),
+                ],
+              ),
+            ),
+          ],
         );
       },
     );

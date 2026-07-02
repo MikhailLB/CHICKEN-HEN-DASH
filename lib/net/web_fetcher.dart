@@ -3,7 +3,6 @@ import 'dart:io';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:http/http.dart' as http;
 
-import '../core/app_facade.dart';
 import '../crypto/xor_pipe.dart';
 
 // ============================================================
@@ -15,10 +14,11 @@ import '../crypto/xor_pipe.dart';
 // string is applied to the WebView via `setUserAgent(...)` in
 // portal_stage.dart — traffic must look consistent to the backend.
 //
-// Per the "Zeus/Magma" convention the UA carries `appid` and `appname`
-// suffixes so the affiliate backend can tell installs apart when several
-// of our games share the same domain.  The Chrome / WebKit fragments
-// are XOR-encoded so they don't stand out in `strings ...apk`.
+// The UA carries no app identifiers — the bundle id / app name travel
+// exclusively in the POST body of the config request so the WebView
+// contents never expose them to the rendered page.  The Chrome /
+// WebKit fragments are XOR-encoded so they don't stand out in
+// `strings ...apk`.
 // ============================================================
 
 class WebFetcher extends http.BaseClient {
@@ -29,8 +29,7 @@ class WebFetcher extends http.BaseClient {
   String _stampedAgent =
       'Mozilla/5.0 (Linux; Android 14; Pixel 8) '
       'AppleWebKit/537.36 (KHTML, like Gecko) '
-      'Chrome/132.0.6834.163 Mobile Safari/537.36 '
-      'appid/${AppFacade.bundleId} appname/${AppFacade.appName}';
+      'Chrome/132.0.6834.163 Mobile Safari/537.36';
 
   bool _warmed = false;
 
@@ -53,20 +52,18 @@ class WebFetcher extends http.BaseClient {
         final build = info.display.isNotEmpty
             ? _sanitize(info.display)
             : _sanitize(info.id);
-        _stampedAgent = _stampAppTag(
-          'Mozilla/5.0 (Linux; Android $sdk; $brand $model Build/$build) '
-          'AppleWebKit/$webkitVersion (KHTML, like Gecko) '
-          'Chrome/$chromeVersion Mobile Safari/$webkitVersion',
-        );
+        _stampedAgent =
+            'Mozilla/5.0 (Linux; Android $sdk; $brand $model Build/$build) '
+            'AppleWebKit/$webkitVersion (KHTML, like Gecko) '
+            'Chrome/$chromeVersion Mobile Safari/$webkitVersion';
       } else if (Platform.isIOS) {
         final info = await plugin.iosInfo;
         final ver = info.systemVersion.replaceAll('.', '_');
-        _stampedAgent = _stampAppTag(
-          'Mozilla/5.0 (iPhone; CPU iPhone OS $ver like Mac OS X) '
-          'AppleWebKit/$webkitVersion (KHTML, like Gecko) '
-          'Version/${info.systemVersion} Mobile/15E148 '
-          'Safari/$webkitVersion',
-        );
+        _stampedAgent =
+            'Mozilla/5.0 (iPhone; CPU iPhone OS $ver like Mac OS X) '
+            'AppleWebKit/$webkitVersion (KHTML, like Gecko) '
+            'Version/${info.systemVersion} Mobile/15E148 '
+            'Safari/$webkitVersion';
       }
     } catch (_) {
       // Keep fallback UA.
@@ -74,11 +71,6 @@ class WebFetcher extends http.BaseClient {
   }
 
   String get userAgent => _stampedAgent;
-
-  /// Append the mandatory `appid/... appname/...` suffix so the backend
-  /// can distinguish installs across our portfolio of games.
-  String _stampAppTag(String base) =>
-      '$base appid/${AppFacade.bundleId} appname/${AppFacade.appName}';
 
   String _sanitize(String value) {
     // Strip characters that would break the UA parser on the backend.

@@ -127,16 +127,20 @@ class _PushInvitePageState extends State<PushInvitePage> {
     final height = constraints.maxHeight;
 
     // Same coin geometry for both buttons — no visual hierarchy tricks.
-    final coinWidth = isLandscape ? width * 0.34 : width * 0.78;
-    const coinHeight = 62.0;
+    // Landscape: tighter width / height so the pair sits below the
+    // "Allow notifications" sign instead of overlapping it.  Portrait
+    // stays with the original coin size.
+    final coinWidth = isLandscape ? width * 0.26 : width * 0.72;
+    final coinHeight = isLandscape ? 46.0 : 58.0;
 
     if (isLandscape) {
-      // Side by side, same y baseline.
-      final gap = width * 0.04;
+      // Side by side, same y baseline, pinned near the very bottom so
+      // the info card above them remains fully visible.
+      final gap = width * 0.03;
       return Positioned(
         left: 0,
         right: 0,
-        bottom: height * 0.09,
+        bottom: height * 0.04,
         child: Row(
           mainAxisSize: MainAxisSize.max,
           mainAxisAlignment: MainAxisAlignment.center,
@@ -167,7 +171,7 @@ class _PushInvitePageState extends State<PushInvitePage> {
     return Positioned(
       left: 0,
       right: 0,
-      bottom: height * 0.08,
+      bottom: height * 0.06,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -270,8 +274,10 @@ class _CoinButtonState extends State<_CoinButton> {
               style: TextStyle(
                 color: label,
                 fontWeight: FontWeight.w900,
-                fontSize: 22,
-                letterSpacing: 2,
+                // Scale label with coin height so smaller landscape
+                // coins don't look cramped.
+                fontSize: widget.height >= 56 ? 22 : 17,
+                letterSpacing: widget.height >= 56 ? 2 : 1.4,
               ),
             ),
           ),
