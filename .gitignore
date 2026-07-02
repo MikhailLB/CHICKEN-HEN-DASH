@@ -52,7 +52,8 @@ app.*.map.json
 # Gradle output cached under android/build/
 /android/build/
 
-# Firebase / Google Services (contains API keys — never commit)
-/android/app/google-services.json
-/android/app/google-services*.json
+# Firebase / Google Services — committed intentionally so CI / other
+# devs pick up the same Firebase project without ceremony.  Do NOT put
+# any additional variants of the file (google-services-prod.json,
+# google-services-qa.json, …) unless you also review them here.
 
