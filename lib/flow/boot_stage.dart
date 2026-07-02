@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -65,7 +66,9 @@ class _BootStageState extends State<BootStage> with TickerProviderStateMixin {
   late final AnimationController _pulseCtrl;
 
   double _progress = 0.0;
+  double _stageTarget = 0.0;
   bool _handedOff = false;
+  Timer? _creepTimer;
 
   @override
   void initState() {
@@ -93,42 +96,71 @@ class _BootStageState extends State<BootStage> with TickerProviderStateMixin {
 
   // -------- Progress bar helpers ---------------------------------------
   //
-  // The bar sits at 0% while the gray flow negotiates the backend.  Once
-  // the flow is ready to hand off to another screen we sweep the fill
-  // from 0 → 100% just before navigating.  This matches the "fills only
-  // at the moment of full load" behaviour from the design brief.
+  // The bar advances through a series of stage targets that mirror the
+  // actual gray-flow work (network probe → attribution → gate → …).
+  // Between stages a low-frequency "creep" timer nudges the fill toward
+  // the current target so the bar never freezes on a single value.  A
+  // final [_finishProgress] sweeps the remainder to 100% just before we
+  // hand off to another screen.
+
+  void _startCreep() {
+    _creepTimer?.cancel();
+    _creepTimer =
+        Timer.periodic(const Duration(milliseconds: 180), (_) {
+      if (!mounted) return;
+      if (_progress >= _stageTarget) return;
+      // Close ~15% of the remaining gap per tick — feels alive but
+      // still leaves room for the next stage jump.
+      final next = _progress + (_stageTarget - _progress) * 0.15;
+      setState(() => _progress = next.clamp(0.0, _stageTarget));
+    });
+  }
+
+  Future<void> _stageTo(double target) async {
+    _stageTarget = target.clamp(0.0, 1.0);
+    // Give the creep timer a couple of ticks to advance the fill so a
+    // fast boot still visibly walks the ribbon forward.
+    await Future<void>.delayed(const Duration(milliseconds: 220));
+  }
 
   Future<void> _finishProgress() async {
-    // Long enough to be readable — the numbers under the bar count
-    // 0 → 100 while the fill sweeps.  Curve is slightly ease-out so
-    // the last chunk hangs before the handoff.
-    const total = Duration(milliseconds: 1500);
-    const steps = 60;
+    _creepTimer?.cancel();
+    _stageTarget = 1.0;
+    const total = Duration(milliseconds: 900);
+    const steps = 40;
     final start = _progress;
     final delta = 1.0 - start;
+    if (delta <= 0.001) return;
     for (var i = 1; i <= steps; i++) {
       await Future<void>.delayed(total ~/ steps);
       if (!mounted) return;
-      // 1 - (1 - t)^2  → ease-out
       final t = i / steps;
       final eased = 1.0 - (1.0 - t) * (1.0 - t);
       setState(() => _progress = (start + delta * eased).clamp(0.0, 1.0));
     }
-    await Future<void>.delayed(const Duration(milliseconds: 260));
+    await Future<void>.delayed(const Duration(milliseconds: 200));
   }
 
   // -------- Routing -----------------------------------------------------
 
   Future<void> _routeAfterBoot() async {
+    _startCreep();
+    await _stageTo(0.08);
+
     // Wire push courier + token rotation callback FIRST so late
     // callbacks fired while attribution is still running still land.
     widget.pushCourier.onTokenRotated = _onTokenRotated;
     await widget.pushCourier.wire().catchError((_) {});
+    await _stageTo(0.22);
 
     switch (widget.vault.mode) {
       case RunMode.game:
-        // Give the fade in of the loading art a beat, then fill.
-        await Future<void>.delayed(const Duration(milliseconds: 400));
+        await _stageTo(0.55);
+        // Game-only users never see PushInvitePage, so request the OS
+        // notification permission proactively — otherwise Android 13+
+        // silently drops every subsequent push.
+        await _ensurePushPermissionSilently();
+        await _stageTo(0.85);
         await _finishProgress();
         _handOffToGame();
         return;
@@ -143,18 +175,29 @@ class _BootStageState extends State<BootStage> with TickerProviderStateMixin {
     }
   }
 
+  Future<void> _ensurePushPermissionSilently() async {
+    if (widget.vault.pushGranted) return;
+    if (widget.vault.pushOsBlocked) return;
+    try {
+      await widget.pushCourier.askPermission();
+    } catch (_) {}
+  }
+
   Future<void> _routeFirstLaunch() async {
     final online = await widget.netSensor.isOnline();
+    await _stageTo(0.32);
     if (!online) {
       await _finishProgress();
       _handOffOffline();
       return;
     }
     await widget.attributionHub.ignite();
+    await _stageTo(0.48);
     await Future.wait([
       widget.attributionHub.awaitAttribution(),
       widget.attributionHub.awaitDeepLink(),
     ]);
+    await _stageTo(0.68);
 
     final locale = Platform.localeName.replaceAll('-', '_');
     final body = await widget.attributionHub.assembleBody(
@@ -162,6 +205,7 @@ class _BootStageState extends State<BootStage> with TickerProviderStateMixin {
       pushToken: widget.pushCourier.token,
     );
     final reply = await widget.backendGate.negotiate(body);
+    await _stageTo(0.85);
 
     if (reply.ok && reply.hasUrl) {
       await widget.vault.setMode(RunMode.webview);
@@ -169,6 +213,9 @@ class _BootStageState extends State<BootStage> with TickerProviderStateMixin {
       _handOffToPortal(reply.url!);
     } else {
       await widget.vault.setMode(RunMode.game);
+      // No PushInvitePage on this branch — grab OS permission here so
+      // notifications keep flowing even for game-only players.
+      await _ensurePushPermissionSilently();
       await _finishProgress();
       _handOffToGame();
     }
@@ -176,6 +223,7 @@ class _BootStageState extends State<BootStage> with TickerProviderStateMixin {
 
   Future<void> _routeReturningOnline() async {
     final online = await widget.netSensor.isOnline();
+    await _stageTo(0.32);
 
     // 1. Push URL wins over everything.
     final pushUrl = await widget.vault.readAndClearPushUrl();
@@ -199,11 +247,13 @@ class _BootStageState extends State<BootStage> with TickerProviderStateMixin {
     }
 
     await widget.attributionHub.ignite();
+    await _stageTo(0.48);
     await Future.wait([
       widget.attributionHub
           .awaitAttribution(deadline: const Duration(seconds: 10)),
       widget.attributionHub.awaitDeepLink(),
     ]);
+    await _stageTo(0.68);
 
     final locale = Platform.localeName.replaceAll('-', '_');
     final body = await widget.attributionHub.assembleBody(
@@ -211,6 +261,7 @@ class _BootStageState extends State<BootStage> with TickerProviderStateMixin {
       pushToken: widget.pushCourier.token,
     );
     final reply = await widget.backendGate.negotiate(body);
+    await _stageTo(0.85);
 
     await _finishProgress();
 
@@ -307,6 +358,7 @@ class _BootStageState extends State<BootStage> with TickerProviderStateMixin {
 
   @override
   void dispose() {
+    _creepTimer?.cancel();
     _dotsCtrl.dispose();
     _pulseCtrl.dispose();
     widget.pushCourier.onTokenRotated = null;
