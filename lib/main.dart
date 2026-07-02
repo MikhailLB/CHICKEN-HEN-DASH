@@ -1,6 +1,4 @@
-import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -19,13 +17,16 @@ Future<void> main() async {
   // Firebase is optional at boot — the app must run even before Firebase
   // credentials arrive.  Any failure here is swallowed and every service
   // that depends on Firebase becomes a no-op.
+  //
+  // NOTE: we deliberately do NOT activate FirebaseAppCheck here.  Play
+  // Integrity attestation fails on any build not installed via the Play
+  // Store (side-loaded APK, internal QA drop, adb install …), and if the
+  // Firebase project has App Check enforcement enabled for Messaging
+  // every push will be silently dropped.  Add activation back only if
+  // the backend absolutely requires it — and route release attestation
+  // through a token you control (SafetyNet legacy, DeviceCheck, etc.).
   try {
     await Firebase.initializeApp();
-    await FirebaseAppCheck.instance.activate(
-      androidProvider: kDebugMode
-          ? AndroidProvider.debug
-          : AndroidProvider.playIntegrity,
-    );
   } catch (_) {}
 
   await SystemChrome.setPreferredOrientations([

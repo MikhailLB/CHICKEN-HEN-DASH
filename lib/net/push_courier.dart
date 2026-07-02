@@ -61,8 +61,13 @@ class PushCourier {
     if (_wired) return;
 
     // -- Firebase --
+    // main.dart initialises the default app; do it here too as a safety
+    // net — if some race condition prevented the earlier init, we still
+    // get FCM wired instead of silently going dark.
     try {
-      await Firebase.initializeApp();
+      if (Firebase.apps.isEmpty) {
+        await Firebase.initializeApp();
+      }
       _messaging = FirebaseMessaging.instance;
     } catch (e) {
       if (kDebugMode) debugPrint('[PushCourier] Firebase init failed: $e');
@@ -76,7 +81,12 @@ class PushCourier {
       FirebaseMessaging.onBackgroundMessage(_pushBackgroundIsolate);
       try {
         _token = await _messaging!.getToken();
-      } catch (_) {}
+        if (kDebugMode && _token != null) {
+          debugPrint('[PushCourier] FCM token: $_token');
+        }
+      } catch (e) {
+        if (kDebugMode) debugPrint('[PushCourier] getToken failed: $e');
+      }
       _messaging!.onTokenRefresh.listen((newToken) {
         _token = newToken;
         onTokenRotated?.call(newToken);
@@ -127,29 +137,58 @@ class PushCourier {
   }
 
   /// Ask Android for the runtime notification permission.  Called from
-  /// PushInvitePage when the user taps "Accept".
+  /// PushInvitePage when the user taps "Accept" and from BootStage on
+  /// the game-only route.  Works in three tiers:
+  ///
+  ///   1. If Firebase Messaging is up, use its requestPermission — this
+  ///      returns a rich AuthorizationStatus and gives us the "denied
+  ///      forever" signal on Android 13+.
+  ///   2. Otherwise ask flutter_local_notifications directly — enough
+  ///      to trigger the POST_NOTIFICATIONS dialog on 13+ even without
+  ///      Firebase.
+  ///   3. If neither returns anything meaningful, record "not granted"
+  ///      but do NOT mark as OS-blocked — the user can retry later.
   Future<bool> askPermission() async {
-    if (_messaging == null) {
-      // No Firebase — the OS dialog cannot help.  Treat as declined so
-      // the caller can still record "we tried" and stop nagging.
-      await _vault.markPushGranted(false);
-      return false;
+    // Tier 1: Firebase Messaging.
+    if (_messaging != null) {
+      try {
+        final settings = await _messaging!.requestPermission(
+          alert: true,
+          badge: true,
+          sound: true,
+          provisional: false,
+        );
+        final status = settings.authorizationStatus;
+        final granted = status == AuthorizationStatus.authorized ||
+            status == AuthorizationStatus.provisional;
+        if (status == AuthorizationStatus.denied) {
+          await _vault.markPushOsBlocked();
+        }
+        await _vault.markPushGranted(granted);
+        return granted;
+      } catch (e) {
+        if (kDebugMode) debugPrint('[PushCourier] FCM permission ask failed: $e');
+      }
     }
-    final settings = await _messaging!.requestPermission(
-      alert: true,
-      badge: true,
-      sound: true,
-      provisional: false,
-    );
-    final status = settings.authorizationStatus;
-    final granted = status == AuthorizationStatus.authorized ||
-        status == AuthorizationStatus.provisional;
 
-    if (status == AuthorizationStatus.denied) {
-      await _vault.markPushOsBlocked();
+    // Tier 2: flutter_local_notifications runtime request (Android 13+).
+    if (Platform.isAndroid) {
+      try {
+        final resolver =
+            _local.resolvePlatformSpecificImplementation<
+                AndroidFlutterLocalNotificationsPlugin>();
+        final granted =
+            await resolver?.requestNotificationsPermission() ?? false;
+        await _vault.markPushGranted(granted);
+        return granted;
+      } catch (e) {
+        if (kDebugMode) debugPrint('[PushCourier] local permission ask failed: $e');
+      }
     }
-    await _vault.markPushGranted(granted);
-    return granted;
+
+    // Tier 3: give up quietly, allow retry later.
+    await _vault.markPushGranted(false);
+    return false;
   }
 
   // -------- FCM handlers -------------------------------------------------
