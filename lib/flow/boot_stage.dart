@@ -519,13 +519,30 @@ class _RibbonProgress extends StatelessWidget {
             borderRadius: BorderRadius.circular(10),
             child: Align(
               alignment: Alignment.centerLeft,
+              // heightFactor: 1.0 forces the fill to stretch the full
+              // ribbon height — without it DecoratedBox has no child
+              // and collapses to zero px, so nothing paints even at
+              // 92 % progress.
               child: FractionallySizedBox(
                 widthFactor: progress.clamp(0.0, 1.0),
+                heightFactor: 1.0,
                 child: const DecoratedBox(
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
-                      colors: [Color(0xFFFFEA7A), Color(0xFFFF8A00)],
+                      colors: [
+                        Color(0xFFFFF3A0),
+                        Color(0xFFFFC844),
+                        Color(0xFFFF8A00),
+                      ],
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
                     ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Color(0x66FF9900),
+                        blurRadius: 6,
+                      ),
+                    ],
                   ),
                 ),
               ),
