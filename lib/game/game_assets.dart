@@ -39,7 +39,7 @@ class GameAssets {
       _load('assets/road.webp'),
       _load('assets/water.webp'),
       _load('assets/pavet.webp'),
-      _load('assets/log .webp'),
+      _load('assets/log.webp'),
       _load('assets/waterlily.webp'),
       _load('assets/rock.webp'),
       _load('assets/hay.webp'),

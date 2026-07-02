@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Push notification icon for Hen Dash.
+  Silhouette of a small flame — matches the "dash / fast" motif of the game.
+  Monochrome white on transparent background (Android draws it tinted).
+  Intentionally different silhouette from typical templates so the drawable
+  hash does not match sibling builds.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="#FFFFFF">
+
+    <!-- Outer flame body -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M12.6,1.9c0.4,2.3 -0.2,4.2 -1.6,5.6 -1.1,1 -2.3,2 -3.1,3.4 -1.9,3.5 -0.4,7.7 3,9.5 3.1,1.6 6.9,0.8 8.8,-2 1.9,-2.8 1.3,-6.5 -1.4,-8.7 -1.4,-1.1 -3,-1.9 -4.1,-3.4C13,4.7 12.7,3.3 12.6,1.9z"/>
+
+    <!-- Inner hotter core -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.55"
+        android:pathData="M13.4,9.1c0.1,1.5 -0.4,2.7 -1.4,3.5 -1.2,1 -2.2,2.1 -2,3.7 0.2,1.8 1.8,2.9 3.6,2.8 1.9,-0.1 3.3,-1.5 3.3,-3.2 0.1,-1.7 -1,-2.9 -2.1,-3.9C13.9,11.2 13.5,10.2 13.4,9.1z"/>
+
+    <!-- Small spark below the flame for the "dash" impression -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.75"
+        android:pathData="M6.2,15.4c0.7,0.2 1.1,0.7 1.2,1.4 0.1,0.7 -0.3,1.3 -0.9,1.5 -0.7,0.2 -1.4,-0.1 -1.7,-0.7 -0.3,-0.6 -0.1,-1.3 0.4,-1.7C5.5,15.5 5.9,15.4 6.2,15.4z"/>
+</vector>

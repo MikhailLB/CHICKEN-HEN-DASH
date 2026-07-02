@@ -49,3 +49,6 @@ app.*.map.json
 /android/keystore/*.jks
 /android/keystore/*.keystore
 
+# Gradle output cached under android/build/
+/android/build/
+

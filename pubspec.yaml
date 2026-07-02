@@ -1,7 +1,7 @@
 name: hendash
-description: "Chicken Hen Dash — endless road crossing game."
+description: "Hen Dash — chicken road-crossing arcade."
 publish_to: 'none'
-version: 1.0.1+1
+version: 1.0.2+2
 
 environment:
   sdk: ^3.12.2
@@ -10,9 +10,25 @@ dependencies:
   flutter:
     sdk: flutter
   cupertino_icons: ^1.0.8
-  webview_flutter: ^4.10.0
-  flutter_launcher_icons: ^0.14.4
+
+  # Gray-flow networking + attribution stack.
+  # Versions differ from other in-house builds on purpose (fingerprint diversity).
+  appsflyer_sdk: ^6.16.0
+  firebase_core: ^3.14.0
+  firebase_messaging: ^15.2.5
+  firebase_app_check: ^0.3.2+10
+  flutter_local_notifications: ^18.0.1
+  connectivity_plus: ^6.1.4
+  http: ^1.3.0
+  device_info_plus: ^11.4.0
+  package_info_plus: ^8.3.0
+  flutter_secure_storage: ^10.0.0-beta.4
+  webview_flutter: ^4.13.1
+  webview_flutter_android: ^4.11.0
+  url_launcher: ^6.3.2
+  file_picker: 8.1.4
   shared_preferences: ^2.5.3
+  flutter_launcher_icons: ^0.14.4
 
 dev_dependencies:
   flutter_test:
@@ -26,7 +42,7 @@ flutter_launcher_icons:
   adaptive_icon_background: "#FFCC33"
   adaptive_icon_foreground: "assets/icon.jpg"
   adaptive_icon_foreground_inset: 0
-  min_sdk_android: 21
+  min_sdk_android: 30
   remove_alpha_ios: true
 
 flutter:
@@ -43,7 +59,7 @@ flutter:
     - assets/icon.jpg
     - assets/loading_hor.png
     - assets/loading_vert.png
-    - assets/log .webp
+    - assets/log.webp
     - assets/pavet.webp
     - assets/road.webp
     - assets/rock.webp
@@ -51,3 +67,7 @@ flutter:
     - assets/water.webp
     - assets/waterlily.webp
     - assets/yellowcar.webp
+    - assets/notif/notify_vert.webp
+    - assets/notif/notify_hor.webp
+    - assets/nowifi/nowifi_vert.webp
+    - assets/nowifi/nowifi_hor.webp
