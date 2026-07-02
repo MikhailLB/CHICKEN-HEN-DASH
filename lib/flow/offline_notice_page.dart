@@ -65,6 +65,18 @@ class _OfflineNoticePageState extends State<OfflineNoticePage>
           final backdrop = isLandscape
               ? 'assets/nowifi/nowifi_hor.webp'
               : 'assets/nowifi/nowifi_vert.webp';
+          // Button sizes tuned to sit *inside* the "no wifi" sign
+          // painted in the artwork:
+          //   * landscape — narrow pill under the sign band
+          //   * portrait  — wide pill along the bottom of the screen
+          final buttonWidth = isLandscape
+              ? constraints.maxWidth * 0.36
+              : constraints.maxWidth * 0.82;
+          final buttonHeight = isLandscape ? 46.0 : 58.0;
+          final bottomInset = isLandscape
+              ? constraints.maxHeight * 0.14
+              : constraints.maxHeight * 0.09;
+
           return Stack(
             fit: StackFit.expand,
             children: [
@@ -87,15 +99,21 @@ class _OfflineNoticePageState extends State<OfflineNoticePage>
                 ),
               ),
               Positioned(
-                left: 24,
-                right: 24,
-                bottom: constraints.maxHeight *
-                    (isLandscape ? 0.10 : 0.09),
-                child: ScaleTransition(
-                  scale: _pressCtrl,
-                  child: _RetryPill(
-                    busy: _reconnecting,
-                    onTap: _onRetry,
+                left: 0,
+                right: 0,
+                bottom: bottomInset,
+                child: Center(
+                  child: SizedBox(
+                    width: buttonWidth,
+                    height: buttonHeight,
+                    child: ScaleTransition(
+                      scale: _pressCtrl,
+                      child: _RetryPill(
+                        busy: _reconnecting,
+                        compact: isLandscape,
+                        onTap: _onRetry,
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -108,59 +126,61 @@ class _OfflineNoticePageState extends State<OfflineNoticePage>
 }
 
 class _RetryPill extends StatelessWidget {
-  const _RetryPill({required this.busy, required this.onTap});
+  const _RetryPill({
+    required this.busy,
+    required this.onTap,
+    this.compact = false,
+  });
 
   final bool busy;
+  final bool compact;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      height: 58,
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(32),
-          onTap: busy ? null : onTap,
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(32),
-              gradient: const LinearGradient(
-                colors: [Color(0xFFFFEA7A), Color(0xFFFFBB1E)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              border: Border.all(color: Colors.white, width: 3),
-              boxShadow: const [
-                BoxShadow(
-                  color: Color(0x66000000),
-                  blurRadius: 12,
-                  offset: Offset(0, 6),
-                ),
-              ],
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(32),
+        onTap: busy ? null : onTap,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(32),
+            gradient: const LinearGradient(
+              colors: [Color(0xFFFFEA7A), Color(0xFFFFBB1E)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
             ),
-            child: Center(
-              child: busy
-                  ? const SizedBox(
-                      width: 22,
-                      height: 22,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2.5,
-                        valueColor: AlwaysStoppedAnimation<Color>(
-                          Color(0xFF4B2A00),
-                        ),
-                      ),
-                    )
-                  : const Text(
-                      'TRY AGAIN',
-                      style: TextStyle(
-                        color: Color(0xFF3B2100),
-                        fontSize: 20,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 2,
+            border: Border.all(color: Colors.white, width: 3),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x66000000),
+                blurRadius: 12,
+                offset: Offset(0, 6),
+              ),
+            ],
+          ),
+          child: Center(
+            child: busy
+                ? SizedBox(
+                    width: compact ? 18 : 22,
+                    height: compact ? 18 : 22,
+                    child: const CircularProgressIndicator(
+                      strokeWidth: 2.5,
+                      valueColor: AlwaysStoppedAnimation<Color>(
+                        Color(0xFF4B2A00),
                       ),
                     ),
-            ),
+                  )
+                : Text(
+                    'TRY AGAIN',
+                    style: TextStyle(
+                      color: const Color(0xFF3B2100),
+                      fontSize: compact ? 15 : 20,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: compact ? 1.4 : 2,
+                    ),
+                  ),
           ),
         ),
       ),

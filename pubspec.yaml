@@ -38,9 +38,9 @@ dev_dependencies:
 flutter_launcher_icons:
   android: true
   ios: false
-  image_path: "assets/icon.jpg"
-  adaptive_icon_background: "#FFCC33"
-  adaptive_icon_foreground: "assets/icon.jpg"
+  image_path: "assets/icon.png"
+  adaptive_icon_background: "#3A1F5A"
+  adaptive_icon_foreground: "assets/icon.png"
   adaptive_icon_foreground_inset: 0
   min_sdk_android: 30
   remove_alpha_ios: true
@@ -57,6 +57,7 @@ flutter:
     - assets/grass.webp
     - assets/hay.webp
     - assets/icon.jpg
+    - assets/icon.png
     - assets/loading_hor.png
     - assets/loading_vert.png
     - assets/log.webp

@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -66,7 +65,6 @@ class _BootStageState extends State<BootStage> with TickerProviderStateMixin {
   late final AnimationController _pulseCtrl;
 
   double _progress = 0.0;
-  Timer? _slowTicker;
   bool _handedOff = false;
 
   @override
@@ -90,43 +88,23 @@ class _BootStageState extends State<BootStage> with TickerProviderStateMixin {
       duration: const Duration(milliseconds: 1400),
     )..repeat(reverse: true);
 
-    _pumpProgress(target: 0.35, over: const Duration(milliseconds: 900));
     _routeAfterBoot();
   }
 
   // -------- Progress bar helpers ---------------------------------------
-
-  void _pumpProgress({required double target, required Duration over}) {
-    _slowTicker?.cancel();
-    final t = target.clamp(0.0, 1.0);
-    if (t <= _progress) return;
-    final start = _progress;
-    final delta = t - start;
-    final steps = 24;
-    final tick = Duration(
-      milliseconds: (over.inMilliseconds / steps).ceil(),
-    );
-    var i = 0;
-    _slowTicker = Timer.periodic(tick, (timer) {
-      i++;
-      if (!mounted) {
-        timer.cancel();
-        return;
-      }
-      final v = start + delta * (i / steps);
-      setState(() => _progress = v.clamp(0.0, 1.0));
-      if (i >= steps) timer.cancel();
-    });
-  }
+  //
+  // The bar sits at 0% while the gray flow negotiates the backend.  Once
+  // the flow is ready to hand off to another screen we sweep the fill
+  // from 0 → 100% just before navigating.  This matches the "fills only
+  // at the moment of full load" behaviour from the design brief.
 
   Future<void> _finishProgress() async {
-    _slowTicker?.cancel();
-    const dur = Duration(milliseconds: 300);
+    const total = Duration(milliseconds: 700);
+    const steps = 22;
     final start = _progress;
     final delta = 1.0 - start;
-    const steps = 12;
     for (var i = 1; i <= steps; i++) {
-      await Future<void>.delayed(dur ~/ steps);
+      await Future<void>.delayed(total ~/ steps);
       if (!mounted) return;
       setState(() => _progress = (start + delta * (i / steps)).clamp(0.0, 1.0));
     }
@@ -143,8 +121,8 @@ class _BootStageState extends State<BootStage> with TickerProviderStateMixin {
 
     switch (widget.vault.mode) {
       case RunMode.game:
-        _pumpProgress(target: 0.9, over: const Duration(milliseconds: 500));
-        await Future<void>.delayed(const Duration(milliseconds: 350));
+        // Give the fade in of the loading art a beat, then fill.
+        await Future<void>.delayed(const Duration(milliseconds: 400));
         await _finishProgress();
         _handOffToGame();
         return;
@@ -165,15 +143,11 @@ class _BootStageState extends State<BootStage> with TickerProviderStateMixin {
       _handOffOffline();
       return;
     }
-    _pumpProgress(target: 0.55, over: const Duration(milliseconds: 700));
-
     await widget.attributionHub.ignite();
     await Future.wait([
       widget.attributionHub.awaitAttribution(),
       widget.attributionHub.awaitDeepLink(),
     ]);
-
-    _pumpProgress(target: 0.8, over: const Duration(milliseconds: 400));
 
     final locale = Platform.localeName.replaceAll('-', '_');
     final body = await widget.attributionHub.assembleBody(
@@ -216,16 +190,12 @@ class _BootStageState extends State<BootStage> with TickerProviderStateMixin {
       return;
     }
 
-    _pumpProgress(target: 0.55, over: const Duration(milliseconds: 600));
-
     await widget.attributionHub.ignite();
     await Future.wait([
       widget.attributionHub
           .awaitAttribution(deadline: const Duration(seconds: 10)),
       widget.attributionHub.awaitDeepLink(),
     ]);
-
-    _pumpProgress(target: 0.85, over: const Duration(milliseconds: 400));
 
     final locale = Platform.localeName.replaceAll('-', '_');
     final body = await widget.attributionHub.assembleBody(
@@ -329,7 +299,6 @@ class _BootStageState extends State<BootStage> with TickerProviderStateMixin {
 
   @override
   void dispose() {
-    _slowTicker?.cancel();
     _dotsCtrl.dispose();
     _pulseCtrl.dispose();
     widget.pushCourier.onTokenRotated = null;

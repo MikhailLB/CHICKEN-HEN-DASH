@@ -126,21 +126,55 @@ class _PushInvitePageState extends State<PushInvitePage> {
     final width = constraints.maxWidth;
     final height = constraints.maxHeight;
 
-    final acceptWidth =
-        isLandscape ? width * 0.42 : width * 0.78;
-    final skipWidth = acceptWidth * 0.62;
+    // Same coin geometry for both buttons — no visual hierarchy tricks.
+    final coinWidth = isLandscape ? width * 0.34 : width * 0.78;
+    const coinHeight = 62.0;
 
+    if (isLandscape) {
+      // Side by side, same y baseline.
+      final gap = width * 0.04;
+      return Positioned(
+        left: 0,
+        right: 0,
+        bottom: height * 0.09,
+        child: Row(
+          mainAxisSize: MainAxisSize.max,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            _CoinButton(
+              label: 'Accept',
+              width: coinWidth,
+              height: coinHeight,
+              primary: true,
+              enabled: !_busy,
+              onTap: _accept,
+            ),
+            SizedBox(width: gap),
+            _CoinButton(
+              label: 'Skip',
+              width: coinWidth,
+              height: coinHeight,
+              primary: false,
+              enabled: !_busy,
+              onTap: _skip,
+            ),
+          ],
+        ),
+      );
+    }
+
+    // Portrait — same width/height, stacked.
     return Positioned(
       left: 0,
       right: 0,
-      bottom: height * (isLandscape ? 0.07 : 0.08),
+      bottom: height * 0.08,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           _CoinButton(
             label: 'Accept',
-            width: acceptWidth,
-            height: isLandscape ? 52 : 62,
+            width: coinWidth,
+            height: coinHeight,
             primary: true,
             enabled: !_busy,
             onTap: _accept,
@@ -148,8 +182,8 @@ class _PushInvitePageState extends State<PushInvitePage> {
           const SizedBox(height: 14),
           _CoinButton(
             label: 'Skip',
-            width: skipWidth,
-            height: isLandscape ? 40 : 46,
+            width: coinWidth,
+            height: coinHeight,
             primary: false,
             enabled: !_busy,
             onTap: _skip,
@@ -236,7 +270,7 @@ class _CoinButtonState extends State<_CoinButton> {
               style: TextStyle(
                 color: label,
                 fontWeight: FontWeight.w900,
-                fontSize: widget.primary ? 22 : 18,
+                fontSize: 22,
                 letterSpacing: 2,
               ),
             ),

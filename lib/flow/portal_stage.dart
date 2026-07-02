@@ -109,7 +109,21 @@ class _PortalStageState extends State<PortalStage>
   }
 
   void _applyImmersive() {
-    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    // Edge-to-edge (not sticky-immersive) so the system bars remain
+    // visible and the platform reports a valid viewPadding.  The
+    // WebView is inset by that padding so page content always sits
+    // inside the visually safe rectangle — no notches, no gesture bar,
+    // no camera cutouts poking into the layout.
+    SystemChrome.setEnabledSystemUIMode(
+      SystemUiMode.edgeToEdge,
+      overlays: SystemUiOverlay.values,
+    );
+    SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      systemNavigationBarColor: Colors.transparent,
+      statusBarIconBrightness: Brightness.light,
+      systemNavigationBarIconBrightness: Brightness.light,
+    ));
   }
 
   @override
@@ -395,9 +409,11 @@ class _PortalStageState extends State<PortalStage>
 
   @override
   Widget build(BuildContext context) {
-    final isLandscape =
-        MediaQuery.of(context).orientation == Orientation.landscape;
-    final topInset = isLandscape ? 0.0 : MediaQuery.of(context).viewPadding.top;
+    // Padding respects notches, curved corners and gesture bars on every
+    // side.  In immersive-sticky mode Android reports viewPadding as the
+    // system-reserved area even when the bars are hidden, so this keeps
+    // the WebView content inside the visually safe rectangle.
+    final viewPadding = MediaQuery.of(context).viewPadding;
 
     return PopScope(
       canPop: false,
@@ -411,7 +427,12 @@ class _PortalStageState extends State<PortalStage>
           fit: StackFit.expand,
           children: [
             Padding(
-              padding: EdgeInsets.only(top: topInset),
+              padding: EdgeInsets.only(
+                top: viewPadding.top,
+                bottom: viewPadding.bottom,
+                left: viewPadding.left,
+                right: viewPadding.right,
+              ),
               child: WebViewWidget(controller: _view),
             ),
             if (_spinning)
