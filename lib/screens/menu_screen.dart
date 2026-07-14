@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../bridge/insight.dart';
 import 'game_screen.dart';
 import 'webview_screen.dart';
 
@@ -18,6 +19,7 @@ class _MenuScreenState extends State<MenuScreen> {
   @override
   void initState() {
     super.initState();
+    Insight.screen('menu');
     SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
     _loadBest();
   }
@@ -31,6 +33,7 @@ class _MenuScreenState extends State<MenuScreen> {
   }
 
   void _openGame() async {
+    Insight.event('menu_play');
     await Navigator.of(context).push(
       MaterialPageRoute<void>(builder: (_) => const GameScreen()),
     );
@@ -38,6 +41,8 @@ class _MenuScreenState extends State<MenuScreen> {
   }
 
   void _openWeb(String title, String url) {
+    Insight.event('menu_open_web');
+    Insight.tag('menu_web_target', title);
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => WebViewScreen(title: title, url: url),

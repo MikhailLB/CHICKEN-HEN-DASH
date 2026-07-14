@@ -1,8 +1,10 @@
+import 'package:clarity_flutter/clarity_flutter.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'app_root.dart';
+import 'bridge/insight.dart';
 import 'flow/boot_stage.dart';
 import 'net/attribution_hub.dart';
 import 'net/backend_gate.dart';
@@ -53,13 +55,22 @@ Future<void> main() async {
   final backendGate    = BackendGate(vault);
   final pushCourier    = PushCourier(vault);
 
-  runApp(HenDashRoot(
-    initial: BootStage(
-      vault: vault,
-      netSensor: netSensor,
-      attributionHub: attributionHub,
-      backendGate: backendGate,
-      pushCourier: pushCourier,
+  // Wrap the whole tree in ClarityWidget so session replay captures the
+  // native Flutter surface (loading, push-invite promo, game, WebView
+  // container).  The DOM inside the WebView is NOT recorded — funnel
+  // events for that side are emitted from PortalStage via the Insight
+  // facade.  Any Clarity failure is swallowed inside Insight itself, so
+  // it can never crash the gray flow.
+  runApp(ClarityWidget(
+    clarityConfig: Insight.config,
+    app: HenDashRoot(
+      initial: BootStage(
+        vault: vault,
+        netSensor: netSensor,
+        attributionHub: attributionHub,
+        backendGate: backendGate,
+        pushCourier: pushCourier,
+      ),
     ),
   ));
 }

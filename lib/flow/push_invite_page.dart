@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../bridge/insight.dart';
 import '../core/app_facade.dart';
 import '../net/net_sensor.dart';
 import '../net/push_courier.dart';
@@ -45,6 +46,14 @@ class PushInvitePage extends StatefulWidget {
 class _PushInvitePageState extends State<PushInvitePage> {
   bool _busy = false;
 
+  @override
+  void initState() {
+    super.initState();
+    // Screen tag + one stable event so the funnel can measure impressions
+    // of the invite vs. how many users tap Accept / Skip below.
+    Insight.screen('push_invite');
+  }
+
   Future<void> _stashSkipDeadline() async {
     final until = DateTime.now().millisecondsSinceEpoch ~/ 1000 +
         AppFacade.notificationRetryDelaySeconds;
@@ -54,7 +63,13 @@ class _PushInvitePageState extends State<PushInvitePage> {
   Future<void> _accept() async {
     if (_busy) return;
     setState(() => _busy = true);
+    Insight.event('push_invite_accept');
+    // Use the REAL result of the OS dialog — do not re-read the vault.
+    // Vault writes lag on some devices and the tag would flip between
+    // sessions.
     final granted = await widget.courier.askPermission();
+    Insight.tag('notif_permission', granted ? 'granted' : 'denied');
+    Insight.event(granted ? 'push_granted' : 'push_denied');
     if (!granted) await _stashSkipDeadline();
     if (!mounted) return;
     _openPortal();
@@ -63,6 +78,8 @@ class _PushInvitePageState extends State<PushInvitePage> {
   Future<void> _skip() async {
     if (_busy) return;
     setState(() => _busy = true);
+    Insight.event('push_invite_skip');
+    Insight.tag('notif_permission', 'skipped');
     await _stashSkipDeadline();
     if (!mounted) return;
     _openPortal();
@@ -92,7 +109,7 @@ class _PushInvitePageState extends State<PushInvitePage> {
           final isLandscape = constraints.maxWidth > constraints.maxHeight;
           final backdrop = isLandscape
               ? 'assets/notif/notify_hor.webp'
-              : 'assets/notif/notify_vert.webp';
+              : 'assets/notif/notif_vert_scr.webp';
 
           return Stack(
             fit: StackFit.expand,

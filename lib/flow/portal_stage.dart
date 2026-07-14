@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:ui' show DisplayFeatureType;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -8,6 +9,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
 
+import '../bridge/insight.dart';
 import '../net/net_sensor.dart';
 import '../net/push_courier.dart';
 import '../net/web_fetcher.dart';
@@ -60,10 +62,28 @@ class _PortalStageState extends State<PortalStage>
   String? _lastMainFrame;
   int _redirectRetries = 0;
 
+  // ---- Insight tracking state ----------------------------------------
+  // `_offerReached` — first successful main-frame load happened, so the
+  //                   user actually saw the offer site at least once.
+  //                   Once true it never flips back — subsequent errors
+  //                   fire `web_error_after_load` instead of
+  //                   `web_offer_unreachable`.
+  // `_pageHadError` — reset on every navigation start; blocks a false
+  //                   `web_offer_reached` when Chrome fires
+  //                   `onPageFinished` for the built-in error page.
+  bool _offerReached = false;
+  bool _pageHadError = false;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+
+    // Set the Clarity screen tag + emit one stable event when the
+    // WebView shell mounts.  `last_screen == web` filters straight to
+    // the WebView sessions in the dashboard.
+    Insight.screen('web');
+    Insight.event('web_open');
 
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.portraitUp,
@@ -78,15 +98,29 @@ class _PortalStageState extends State<PortalStage>
       ..setUserAgent(webFetcher.userAgent)
       ..setBackgroundColor(Colors.black)
       ..enableZoom(false)
+      ..addJavaScriptChannel(
+        // Bridge for the injected in-page probe.  The WebView DOM is
+        // invisible to Clarity replay — this channel lifts SPA route
+        // changes, deposit/register/login clicks and auth submits back
+        // into Dart so they can be forwarded as Clarity events.
+        'AegisInsight',
+        onMessageReceived: (m) => _onWebSignal(m.message),
+      )
       ..setNavigationDelegate(NavigationDelegate(
         onPageStarted: (_) {
+          // Reset per-navigation error flag BEFORE we flip the spinner
+          // — `onPageFinished` uses this to decide whether the load was
+          // clean (real offer) or an error page.
+          _pageHadError = false;
           if (mounted) setState(() => _spinning = true);
         },
-        onPageFinished: (_) {
+        onPageFinished: (url) {
           if (mounted) setState(() => _spinning = false);
           _redirectRetries = 0;
           _stripSiteInsets();
           _wireKeyboardShifter();
+          _installInsightProbe();
+          _trackWebPage(url);
         },
         onWebResourceError: _onError,
         onNavigationRequest: _decideNavigation,
@@ -109,14 +143,13 @@ class _PortalStageState extends State<PortalStage>
   }
 
   void _applyImmersive() {
-    // Edge-to-edge (not sticky-immersive) so the system bars remain
-    // visible and the platform reports a valid viewPadding.  The
-    // WebView is inset by that padding so page content always sits
-    // inside the visually safe rectangle — no notches, no gesture bar,
-    // no camera cutouts poking into the layout.
+    // Full-screen sticky immersive: BOTH status bar and navigation bar
+    // stay hidden so the WebView owns the whole display and no
+    // reserved gutter appears at the top or bottom.  Either bar
+    // reappears briefly on an edge swipe, then auto-fades.
     SystemChrome.setEnabledSystemUIMode(
-      SystemUiMode.edgeToEdge,
-      overlays: SystemUiOverlay.values,
+      SystemUiMode.immersiveSticky,
+      overlays: const [],
     );
     SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
@@ -128,7 +161,15 @@ class _PortalStageState extends State<PortalStage>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) _applyImmersive();
+    if (state == AppLifecycleState.resumed) {
+      _applyImmersive();
+      Insight.event('web_foreground');
+    } else if (state == AppLifecycleState.paused) {
+      // Backgrounding while inside the WebView is the clearest drop-off
+      // marker — combine with `last_screen` in the dashboard to spot
+      // users who leave mid-funnel.
+      Insight.event('web_background');
+    }
   }
 
   // -------- Android-only WebView tweaks --------------------------------
@@ -140,6 +181,14 @@ class _PortalStageState extends State<PortalStage>
 
     // Autoplay video without requiring a first tap.
     platform.setMediaPlaybackRequiresUserGesture(false);
+
+    // Read the site's <meta name="viewport"> so `width=device-width`
+    // and `initial-scale=1` are respected.  Default in webview_flutter
+    // is `setUseWideViewPort(false)`, which makes Chrome fall back to a
+    // 980-CSS-px viewport and then upscale content — buttons end up
+    // 2-3× larger than intended.  With this flag on plus our injected
+    // viewport meta the WebView renders at true mobile scale.
+    platform.setUseWideViewPort(true);
 
     // File picker for <input type="file">.
     platform.setOnShowFileSelector(_pickFiles);
@@ -185,7 +234,10 @@ class _PortalStageState extends State<PortalStage>
     }
 
     // Everything else (intent://, tel://, mailto://, market://, ...)
-    // hands off to the OS.
+    // hands off to the OS.  Tag the scheme so the dashboard shows how
+    // often the WebView bounces the user out to a deposit / payment app.
+    Insight.event('web_external');
+    Insight.tag('web_external_scheme', scheme);
     _openExternally(uri);
     return NavigationDecision.prevent;
   }
@@ -198,6 +250,27 @@ class _PortalStageState extends State<PortalStage>
 
   Future<void> _onError(WebResourceError err) async {
     if (err.isForMainFrame != true) return;
+
+    // ---- Clarity funnel tagging ----------------------------------------
+    // Do this BEFORE any recovery logic, because both the redirect-loop
+    // retry and the offline slide-off may swallow the error otherwise.
+    _pageHadError = true;
+    final String reason = _classifyWebError(err);
+    final String failedUrl = _lastMainFrame ?? widget.initialUrl;
+    final String host = Uri.tryParse(failedUrl)?.host ?? '';
+    Insight.event('web_error');
+    Insight.tag('web_error_reason', reason);
+    Insight.tag('web_last_error', '${err.errorCode}:${err.description}');
+    if (host.isNotEmpty) Insight.tag('web_error_host', host);
+    if (!_offerReached) {
+      // The user never saw the offer.  This is the ERR_CONNECTION_REFUSED
+      // / DNS-blackhole case the dashboard cares about most.
+      Insight.event('web_offer_unreachable');
+      Insight.tag('offer_reached', 'false');
+      Insight.tag('offer_unreachable_reason', reason);
+    } else {
+      Insight.event('web_error_after_load');
+    }
 
     final blurb = err.description.toLowerCase();
 
@@ -281,11 +354,13 @@ class _PortalStageState extends State<PortalStage>
       '--safe-top:0px!important;--safe-right:0px!important;',
       '--safe-bottom:0px!important;--safe-left:0px!important;',
     '}',
+    // Only neutralise VERTICAL safe-area padding — leave horizontal
+    // margin alone so the site's own gutters (body { padding: 0 12px })
+    // keep working.  Killing left/right padding here glued every
+    // button to the screen edge on partner sites.
     'html,body,#app,#root,#__next,#__nuxt,#__layout,',
     '.mobile-header,.app-shell,.viewport-shell{',
       'padding-top:0!important;',
-      'padding-left:0!important;',
-      'padding-right:0!important;',
       'margin-top:0!important;',
     '}'
   ].join('');
@@ -295,17 +370,27 @@ class _PortalStageState extends State<PortalStage>
     return window.visualViewport.height < window.innerHeight * 0.75;
   }
 
+  var VIEWPORT_CONTENT =
+    'width=device-width, initial-scale=1.0, minimum-scale=1.0, ' +
+    'maximum-scale=5.0, user-scalable=yes, viewport-fit=contain';
+
   function patch(){
     if (keyboardVisible()) return;
     var head = document.head || document.documentElement;
     if (!head) return;
+    // Force a mobile-friendly viewport.  Without width=device-width
+    // Android WebView renders the page as if the viewport was 980px
+    // wide and then scales it up to the physical screen — buttons look
+    // 2 – 3× larger than intended.  We overwrite any existing viewport
+    // meta and inject one if the page never shipped it.
     var meta = document.querySelector('meta[name="viewport"]');
-    if (meta){
-      var content = meta.getAttribute('content') || '';
-      if (!/viewport-fit\s*=\s*contain/i.test(content)){
-        content = content.replace(/,?\s*viewport-fit\s*=\s*\w+/ig,'').trim();
-        meta.setAttribute('content', content + (content ? ', ' : '') + 'viewport-fit=contain');
-      }
+    if (!meta){
+      meta = document.createElement('meta');
+      meta.setAttribute('name', 'viewport');
+      head.appendChild(meta);
+    }
+    if (meta.getAttribute('content') !== VIEWPORT_CONTENT){
+      meta.setAttribute('content', VIEWPORT_CONTENT);
     }
     var node = document.getElementById(STYLE_ID);
     if (!node){
@@ -385,6 +470,190 @@ class _PortalStageState extends State<PortalStage>
 ''');
   }
 
+  // -------- Insight funnel helpers -------------------------------------
+  //
+  // The WebView shell shows up in Clarity replay, but the DOM inside is
+  // not recorded — the funnel below (offer reachability, deposit /
+  // register / login pages and clicks, auth submits) is reconstructed
+  // from these events.  Keep event names STABLE and few; high-cardinality
+  // values (URLs, hosts, labels) go into TAGS.
+
+  /// Route-detection regexes.  Broad on purpose — partner sites use
+  /// wildly different URL styles and copy for the same intent (Cyrillic
+  /// included so the current CIS traffic is not blind).
+  static final RegExp _depositRx = RegExp(
+    r'(deposit|cashier|top.?up|replenish|payment|checkout|wallet|'
+    r'пополн|депозит|касс|оплат|внести|платеж)',
+    caseSensitive: false,
+  );
+  static final RegExp _registerRx = RegExp(
+    r'(sign.?up|regist|create.?account|onboarding|регистрац|зарегистр)',
+    caseSensitive: false,
+  );
+  static final RegExp _loginRx = RegExp(
+    r'(sign.?in|log.?in|log.?on|/auth\b|authoriz|войти|вход|авториз)',
+    caseSensitive: false,
+  );
+
+  void _trackWebPage(String url) {
+    final Uri? uri = Uri.tryParse(url);
+    Insight.screenName(
+      'web:${uri == null ? url : '${uri.host}${uri.path}'}',
+    );
+    Insight.event('web_page');
+    Insight.tag('web_last_url', url);
+    if (!_offerReached && !_pageHadError) {
+      _offerReached = true;
+      Insight.event('web_offer_reached');
+      Insight.tag('offer_reached', 'true');
+      if (uri?.host != null) Insight.tag('offer_host', uri!.host);
+    }
+    if (_depositRx.hasMatch(url)) {
+      Insight.event('web_cashier_page');
+      Insight.tag('reached_cashier', 'true');
+    }
+    _trackAuthPage(url);
+  }
+
+  void _trackAuthPage(String textOrUrl) {
+    if (_registerRx.hasMatch(textOrUrl)) {
+      Insight.event('web_register_page');
+      Insight.tag('reached_register', 'true');
+    } else if (_loginRx.hasMatch(textOrUrl)) {
+      Insight.event('web_login_page');
+      Insight.tag('reached_login', 'true');
+    }
+  }
+
+  /// Turns a WebResourceError into one of ~10 stable reason buckets so
+  /// the dashboard can pivot on `web_error_reason` without dealing with
+  /// platform-specific error codes.
+  static String _classifyWebError(WebResourceError err) {
+    final String d = err.description.toLowerCase();
+    final int c = err.errorCode;
+    if (d.contains('connection_refused') ||
+        d.contains('connection refused')) {
+      return 'connection_refused';
+    }
+    if (d.contains('too_many_redirects') ||
+        d.contains('too many redirects')) {
+      return 'redirect_loop';
+    }
+    if (d.contains('name_not_resolved') ||
+        d.contains('address_unreachable') ||
+        d.contains('unknownhost') ||
+        c == -2) {
+      return 'dns_unresolved';
+    }
+    if (d.contains('timed out') || d.contains('timeout') || c == -8) {
+      return 'timeout';
+    }
+    if (d.contains('internet_disconnected') ||
+        d.contains('network_changed') ||
+        c == -6) {
+      return 'no_network';
+    }
+    if (d.contains('connection_reset')) return 'connection_reset';
+    if (d.contains('connection_closed') ||
+        d.contains('empty_response')) {
+      return 'connection_closed';
+    }
+    if (d.contains('ssl') || d.contains('cert') || c == -11) {
+      return 'ssl_error';
+    }
+    if (d.contains('blocked')) return 'blocked';
+    return 'other';
+  }
+
+  /// Injects an idempotent probe that reports SPA route changes,
+  /// deposit / register / login clicks and auth form submits back to
+  /// Dart over the `AegisInsight` channel.  Safe to call on every
+  /// `onPageFinished` — the `window.__aegisInsight` guard prevents a
+  /// double-install.
+  void _installInsightProbe() {
+    _view.runJavaScript(r'''
+(function(){
+  if (window.__aegisInsight) return; window.__aegisInsight = true;
+  function send(t){ try { AegisInsight.postMessage(t); } catch(e){} }
+  var DEP=/(deposit|cashier|top.?up|add funds|replenish|payment|pay now|checkout|withdraw|пополн|депозит|касс|оплат|внести|вывод|платеж)/i;
+  var REG=/(sign.?up|regist|create.?account|регистрац|зарегистр)/i;
+  var LOG=/(sign.?in|log.?in|log.?on|войти|вход|авториз)/i;
+  var lastPath='';
+  function reportPath(){ var p=location.pathname+location.search; if(p!==lastPath){ lastPath=p; send('path:'+p);} }
+  reportPath();
+  ['pushState','replaceState'].forEach(function(fn){
+    var o=history[fn]; history[fn]=function(){ var r=o.apply(this,arguments); setTimeout(reportPath,60); return r; };
+  });
+  window.addEventListener('popstate',function(){ setTimeout(reportPath,60); });
+  document.addEventListener('click',function(e){
+    try{ var el=e.target;
+      for(var i=0;i<4&&el;i++){
+        var t=((el.innerText||el.value||(el.getAttribute&&el.getAttribute('aria-label'))||'')+'').trim();
+        if(t){ if(DEP.test(t)){send('deposit_click:'+t.slice(0,60));return;}
+               if(REG.test(t)){send('register_click:'+t.slice(0,60));return;}
+               if(LOG.test(t)){send('login_click:'+t.slice(0,60));return;} }
+        el=el.parentElement;
+      }
+    }catch(x){}
+  },true);
+  document.addEventListener('submit',function(e){
+    try{ var f=e.target;
+      var pw=f.querySelectorAll?f.querySelectorAll('input[type="password"]'):[];
+      var blob=((f.innerText||'')+' '+(f.getAttribute('action')||'')+' '+(f.className||''));
+      var confirm=f.querySelector&&(f.querySelector('input[name*="confirm" i]')||f.querySelector('input[name*="repeat" i]'));
+      if(pw&&pw.length>=2){send('auth_submit:register');return;}
+      if(pw&&pw.length===1){ send('auth_submit:'+((confirm||REG.test(blob))?'register':'login')); return; }
+      if(REG.test(blob)){send('auth_submit:register');return;}
+      if(LOG.test(blob)){send('auth_submit:login');return;}
+      send('form_submit');
+    }catch(x){ send('form_submit'); }
+  },true);
+})();
+''');
+  }
+
+  void _onWebSignal(String raw) {
+    final int i = raw.indexOf(':');
+    final String type = i < 0 ? raw : raw.substring(0, i);
+    final String data = i < 0 ? '' : raw.substring(i + 1);
+    switch (type) {
+      case 'path':
+        Insight.event('web_spa_route');
+        Insight.tag('web_last_path', data);
+        if (_depositRx.hasMatch(data)) {
+          Insight.event('web_cashier_page');
+          Insight.tag('reached_cashier', 'true');
+        }
+        _trackAuthPage(data);
+        break;
+      case 'deposit_click':
+        Insight.event('web_deposit_click');
+        Insight.tag('deposit_intent', 'true');
+        if (data.isNotEmpty) Insight.tag('deposit_label', data);
+        break;
+      case 'register_click':
+        Insight.event('web_register_click');
+        Insight.tag('register_intent', 'true');
+        break;
+      case 'login_click':
+        Insight.event('web_login_click');
+        Insight.tag('login_intent', 'true');
+        break;
+      case 'auth_submit':
+        if (data == 'register') {
+          Insight.event('web_register_submit');
+          Insight.tag('attempted_register', 'true');
+        } else {
+          Insight.event('web_login_submit');
+          Insight.tag('attempted_login', 'true');
+        }
+        break;
+      case 'form_submit':
+        Insight.event('web_form_submit');
+        break;
+    }
+  }
+
   // -------- Lifecycle ---------------------------------------------------
 
   @override
@@ -409,6 +678,88 @@ class _PortalStageState extends State<PortalStage>
 
   @override
   Widget build(BuildContext context) {
+    final mq = MediaQuery.of(context);
+    final size = mq.size;
+    final isLandscape = size.width > size.height;
+
+    // In landscape only the camera cutout matters visually — the nav-bar
+    // side (and the opposite bezel) should stretch to the edge so we
+    // don't render two symmetric black gutters around the WebView.
+    // Portrait keeps the full SafeArea because status bar / gesture
+    // pill / camera hole all live on the vertical axis.
+    double landscapeLeftInset = 0;
+    double landscapeRightInset = 0;
+    if (isLandscape) {
+      // 1. Preferred path — DisplayFeatures gives us the exact cutout
+      //    rectangle.  Works on stock Android and most modern OEMs.
+      for (final feature in mq.displayFeatures) {
+        if (feature.type != DisplayFeatureType.cutout) continue;
+        final bounds = feature.bounds;
+        if (bounds.left <= 0) {
+          if (bounds.right > landscapeLeftInset) {
+            landscapeLeftInset = bounds.right;
+          }
+        } else if (bounds.right >= size.width) {
+          final w = size.width - bounds.left;
+          if (w > landscapeRightInset) landscapeRightInset = w;
+        }
+      }
+      // 2. Fallback — many phones with a small waterdrop / U-shaped
+      //    notch never surface it through DisplayFeatures, but the
+      //    platform still reports the physical inset via viewPadding
+      //    (which stays non-zero in immersiveSticky mode because the
+      //    hardware cutout is not something the system UI can hide).
+      //    Use it if the previous pass didn't already find a wider
+      //    gutter on that side.
+      final rawLeft = mq.viewPadding.left;
+      final rawRight = mq.viewPadding.right;
+      if (rawLeft > landscapeLeftInset) landscapeLeftInset = rawLeft;
+      if (rawRight > landscapeRightInset) landscapeRightInset = rawRight;
+    }
+
+    final content = Stack(
+      fit: StackFit.expand,
+      children: [
+        WebViewWidget(controller: _view),
+        if (_spinning)
+          const ColoredBox(
+            color: Color(0xA0000000),
+            child: Center(
+              child: SizedBox(
+                width: 44,
+                height: 44,
+                child: CircularProgressIndicator(
+                  strokeWidth: 3,
+                  valueColor:
+                      AlwaysStoppedAnimation<Color>(Color(0xFFFFCC33)),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+
+    final Widget body = isLandscape
+        // Landscape: fully edge-to-edge — no top / bottom / nav-bar
+        // gutters.  The only horizontal padding is the physical cutout
+        // width (if any), everything else touches the screen edge.
+        ? Padding(
+            padding: EdgeInsets.only(
+              left: landscapeLeftInset,
+              right: landscapeRightInset,
+            ),
+            child: content,
+          )
+        // Portrait: inset only where hardware / status bar sits — the
+        // gesture-bar area at the bottom flows edge-to-edge on purpose.
+        : SafeArea(
+            top: true,
+            bottom: false,
+            left: true,
+            right: true,
+            child: content,
+          );
+
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) async {
@@ -419,39 +770,7 @@ class _PortalStageState extends State<PortalStage>
         // Keep the keyboard from resizing the WebView — the injected
         // scroll shifter puts focused inputs above the keyboard instead.
         resizeToAvoidBottomInset: false,
-        body: SafeArea(
-          // Every side matters: status bar cutout at the top, gesture
-          // pill / nav bar at the bottom, curved-screen bezels on the
-          // left / right (Galaxy S-series edge screens).  In edge-to-
-          // edge mode SafeArea reads the current padding from
-          // MediaQuery, which Android keeps in sync with system bars.
-          top: true,
-          bottom: true,
-          left: true,
-          right: true,
-          minimum: EdgeInsets.zero,
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              WebViewWidget(controller: _view),
-              if (_spinning)
-                const ColoredBox(
-                  color: Color(0xA0000000),
-                  child: Center(
-                    child: SizedBox(
-                      width: 44,
-                      height: 44,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 3,
-                        valueColor:
-                            AlwaysStoppedAnimation<Color>(Color(0xFFFFCC33)),
-                      ),
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        ),
+        body: body,
       ),
     );
   }

@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../bridge/insight.dart';
 import '../data/run_mode.dart';
 import '../net/attribution_hub.dart';
 import '../net/backend_gate.dart';
@@ -18,8 +19,8 @@ import 'portal_stage.dart' deferred as portal;
 // ============================================================
 // BootStage — first screen the user sees; decides gray/white.
 // ============================================================
-// The visual side keeps the HenDash yellow loading art (loading_vert.png
-// / loading_hor.png) with the horizontal progress bar the user already
+// The visual side keeps the HenDash yellow loading art (loading_vert.webp
+// / loading_hor.webp) with the horizontal progress bar the user already
 // approved.  The behavioural side runs the gray-flow state machine:
 //
 //   RunMode.fresh
@@ -71,6 +72,11 @@ class _BootStageState extends State<BootStage> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
+
+    // First screen the user sees — mark it as the current Clarity screen
+    // so any drop-off during boot ends up filed under `screen_loading`
+    // in the funnel (see analytics doc).
+    Insight.screen('loading');
 
     // Allow both orientations on the boot screen — the artwork ships in
     // vertical and horizontal variants.
@@ -198,10 +204,11 @@ class _BootStageState extends State<BootStage> with TickerProviderStateMixin {
 
     switch (widget.vault.mode) {
       case RunMode.game:
-        // Game-only users never see PushInvitePage, so request the OS
-        // notification permission proactively — otherwise Android 13+
-        // silently drops every subsequent push.
-        await _ensurePushPermissionSilently();
+        // White-part users never see the OS notification prompt —
+        // pushes only serve gray-flow re-engagement and asking here
+        // would break the "vanilla native game" experience.
+        Insight.tag('run_mode', 'native');
+        Insight.event('route_native');
         return const _Handoff(_Destination.game);
 
       case RunMode.webview:
@@ -210,14 +217,6 @@ class _BootStageState extends State<BootStage> with TickerProviderStateMixin {
       case RunMode.fresh:
         return _planFirstLaunch();
     }
-  }
-
-  Future<void> _ensurePushPermissionSilently() async {
-    if (widget.vault.pushGranted) return;
-    if (widget.vault.pushOsBlocked) return;
-    try {
-      await widget.pushCourier.askPermission();
-    } catch (_) {}
   }
 
   Future<_Handoff> _planFirstLaunch() async {
@@ -235,20 +234,29 @@ class _BootStageState extends State<BootStage> with TickerProviderStateMixin {
       locale: locale,
       pushToken: widget.pushCourier.token,
     );
+    _identifyFromBody(body);
     final reply = await widget.backendGate.negotiate(body);
 
     if (reply.ok && reply.hasUrl) {
       await widget.vault.setMode(RunMode.webview);
+      Insight.tag('run_mode', 'web');
+      Insight.event('route_web');
       return _Handoff(_Destination.portal, url: reply.url);
     }
     await widget.vault.setMode(RunMode.game);
-    await _ensurePushPermissionSilently();
+    // No push permission ask on the white path — see the RunMode.game
+    // comment above.
+    Insight.tag('run_mode', 'native');
+    Insight.event('route_native');
     return const _Handoff(_Destination.game);
   }
 
   Future<_Handoff> _planReturningOnline() async {
     final pushUrl = await widget.vault.readAndClearPushUrl();
     if (pushUrl != null && pushUrl.isNotEmpty) {
+      Insight.tag('run_mode', 'web');
+      Insight.event('route_push_link');
+      Insight.event('route_web');
       return _Handoff(_Destination.portal, url: pushUrl);
     }
 
@@ -267,16 +275,39 @@ class _BootStageState extends State<BootStage> with TickerProviderStateMixin {
       locale: locale,
       pushToken: widget.pushCourier.token,
     );
+    _identifyFromBody(body);
     final reply = await widget.backendGate.negotiate(body);
 
     if (reply.ok && reply.hasUrl) {
+      Insight.tag('run_mode', 'web');
+      Insight.event('route_web');
       return _Handoff(_Destination.portal, url: reply.url);
     }
     final cached = await widget.backendGate.cachedUrl();
     if (cached != null && cached.isNotEmpty) {
+      Insight.tag('run_mode', 'web');
+      Insight.event('route_cached_link');
+      Insight.event('route_web');
       return _Handoff(_Destination.portal, url: cached);
     }
     return const _Handoff(_Destination.offline);
+  }
+
+  /// Groups the current Clarity session by AppsFlyer id and attaches the
+  /// attribution tags that the dashboard slices by (media_source,
+  /// campaign, af_status, …).  Guarded by [Insight.identify] so a
+  /// missing af_id never wipes a good user id set earlier.
+  void _identifyFromBody(Map<String, dynamic> body) {
+    Insight.identify(
+      body['af_id']?.toString(),
+      tags: {
+        'af_status':    body['af_status']?.toString()    ?? '',
+        'media_source': body['media_source']?.toString() ?? '',
+        'campaign':     body['campaign']?.toString()     ?? '',
+        'os':           body['os']?.toString()           ?? '',
+        'locale':       body['locale']?.toString()       ?? '',
+      },
+    );
   }
 
   Future<void> _onTokenRotated(String newToken) async {
@@ -325,6 +356,16 @@ class _BootStageState extends State<BootStage> with TickerProviderStateMixin {
         ),
       );
     } else {
+      // Returning user — the invite is skipped.  Classify the reason so
+      // `notif_permission` is never blank in the dashboard.
+      Insight.tag(
+        'notif_permission',
+        widget.vault.pushGranted
+            ? 'granted'
+            : widget.vault.pushOsBlocked
+                ? 'os_denied'
+                : 'snoozed',
+      );
       Navigator.of(context).pushReplacement(
         MaterialPageRoute<void>(
           builder: (_) => portal.PortalStage(
@@ -341,6 +382,7 @@ class _BootStageState extends State<BootStage> with TickerProviderStateMixin {
   void _handOffOffline() {
     if (_handedOff || !mounted) return;
     _handedOff = true;
+    Insight.event('route_offline');
     Navigator.of(context).pushReplacement(
       MaterialPageRoute<void>(
         builder: (_) => OfflineNoticePage(
@@ -375,14 +417,14 @@ class _BootStageState extends State<BootStage> with TickerProviderStateMixin {
     return Scaffold(
       // Matches the top-of-sky pixel of the loading art so there is no
       // colour flash between the native launch backdrop and the moment
-      // Flutter finishes decoding loading_vert.png / loading_hor.png.
+      // Flutter finishes decoding loading_vert.webp / loading_hor.webp.
       backgroundColor: const Color(0xFF0180E9),
       body: LayoutBuilder(
         builder: (context, constraints) {
           final isPortrait = constraints.maxHeight >= constraints.maxWidth;
           final backdrop = isPortrait
-              ? 'assets/loading_vert.png'
-              : 'assets/loading_hor.png';
+              ? 'assets/loading_vert.webp'
+              : 'assets/loading_hor.webp';
           return Stack(
             fit: StackFit.expand,
             children: [

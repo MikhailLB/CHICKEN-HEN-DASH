@@ -3,7 +3,7 @@
     <color name="ic_launcher_background">#442C92</color>
     <!-- Solid backdrop shown by the Android launch theme before Flutter
          paints its first frame.  Matches the top-of-sky pixel of
-         assets/loading_vert.png so the transition into BootStage is
+         assets/loading_vert.webp so the transition into BootStage is
          seamless (no yellow / purple flash). -->
     <color name="launch_bg">#0180E9</color>
 </resources>

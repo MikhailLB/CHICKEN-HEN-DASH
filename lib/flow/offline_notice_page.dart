@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../bridge/insight.dart';
+
 // ============================================================
 // OfflineNoticePage — full-bleed "no internet" screen.
 // ============================================================
@@ -27,6 +29,7 @@ class _OfflineNoticePageState extends State<OfflineNoticePage>
   @override
   void initState() {
     super.initState();
+    Insight.screen('offline');
     _pressCtrl = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 90),
@@ -44,6 +47,7 @@ class _OfflineNoticePageState extends State<OfflineNoticePage>
 
   Future<void> _onRetry() async {
     if (_reconnecting) return;
+    Insight.event('offline_retry');
     await _pressCtrl.reverse();
     await _pressCtrl.forward();
     setState(() => _reconnecting = true);

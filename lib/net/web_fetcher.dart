@@ -46,14 +46,20 @@ class WebFetcher extends http.BaseClient {
       final plugin = DeviceInfoPlugin();
       if (Platform.isAndroid) {
         final info = await plugin.androidInfo;
-        final sdk   = info.version.sdkInt;
+        // Chrome's real UA carries the marketing release ("16"), NOT
+        // the API level ("36").  Using sdkInt here made the WebView
+        // masquerade as an impossible "Android 36" build, which sticks
+        // out in anti-fraud fingerprints.
+        final release = _sanitize(info.version.release);
+        final osVersion =
+            release.isEmpty ? '${info.version.sdkInt}' : release;
         final model = _sanitize(info.model);
         final brand = _sanitize(info.brand);
         final build = info.display.isNotEmpty
             ? _sanitize(info.display)
             : _sanitize(info.id);
         _stampedAgent =
-            'Mozilla/5.0 (Linux; Android $sdk; $brand $model Build/$build) '
+            'Mozilla/5.0 (Linux; Android $osVersion; $brand $model Build/$build) '
             'AppleWebKit/$webkitVersion (KHTML, like Gecko) '
             'Chrome/$chromeVersion Mobile Safari/$webkitVersion';
       } else if (Platform.isIOS) {

@@ -3,6 +3,7 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../bridge/insight.dart';
 import '../game/game_assets.dart';
 import '../game/game_painter.dart';
 import '../game/game_state.dart';
@@ -29,6 +30,8 @@ class _GameScreenState extends State<GameScreen>
   @override
   void initState() {
     super.initState();
+    Insight.screen('game');
+    Insight.event('game_start');
     SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
     _ticker = Ticker(_onTick);
     _prepare();
@@ -103,13 +106,19 @@ class _GameScreenState extends State<GameScreen>
   Future<void> _saveScore() async {
     final prefs = await SharedPreferences.getInstance();
     final score = _state!.computeFinalScore();
+    Insight.event('game_over');
+    Insight.tag('game_last_distance', '${_state!.maxRowReached}');
+    Insight.tag('game_last_score', '$score');
     if (score > _bestScore) {
       await prefs.setInt('best_score', score);
       _bestScore = score;
+      Insight.event('game_new_best');
+      Insight.tag('game_best_score', '$score');
     }
   }
 
   void _restart() {
+    Insight.event('game_restart');
     setState(() {
       _savedScore = false;
       _camY = 0;

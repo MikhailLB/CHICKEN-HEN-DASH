@@ -1,7 +1,7 @@
 name: hendash
 description: "Hen Dash — chicken road-crossing arcade."
 publish_to: 'none'
-version: 1.0.1+2
+version: 1.0.1+10
 
 environment:
   sdk: ^3.12.2
@@ -29,6 +29,7 @@ dependencies:
   file_picker: 8.1.4
   shared_preferences: ^2.5.3
   flutter_launcher_icons: ^0.14.4
+  clarity_flutter: ^1.9.0
 
 dev_dependencies:
   flutter_test:
@@ -58,8 +59,8 @@ flutter:
     - assets/hay.webp
     - assets/icon.jpg
     - assets/icon.png
-    - assets/loading_hor.png
-    - assets/loading_vert.png
+    - assets/loading_hor.webp
+    - assets/loading_vert.webp
     - assets/log.webp
     - assets/pavet.webp
     - assets/road.webp
@@ -68,7 +69,7 @@ flutter:
     - assets/water.webp
     - assets/waterlily.webp
     - assets/yellowcar.webp
-    - assets/notif/notify_vert.webp
+    - assets/notif/notif_vert_scr.webp
     - assets/notif/notify_hor.webp
     - assets/nowifi/nowifi_vert.webp
     - assets/nowifi/nowifi_hor.webp
